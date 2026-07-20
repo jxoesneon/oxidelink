@@ -627,6 +627,10 @@ pub fn hidhide_set_enabled(ctx: State<'_, AppCtx>, enabled: bool) -> Result<HidH
 mod tests {
     use super::*;
 
+    // -------------------------------------------------------------------------
+    //  HidHideStatus: defaults & serialization
+    // -------------------------------------------------------------------------
+
     #[test]
     fn default_status_and_multi_sz_helpers_are_consistent() {
         let status = HidHideStatus::default();
@@ -634,20 +638,181 @@ mod tests {
         assert!(!status.enabled);
         assert!(!status.hidden);
         assert!(status.device_path.is_empty());
-
-        let paths = vec![
-            "\\\\Device\\\\PathA".to_string(),
-            "\\\\Device\\\\PathB".to_string(),
-        ];
-        let encoded = encode_multi_sz_bytes(&paths);
-        assert_eq!(decode_multi_sz_bytes(&encoded), paths);
+        assert!(status.message.is_empty());
     }
+
+    #[test]
+    fn hidhide_status_serializes_to_expected_json() {
+        let status = HidHideStatus {
+            installed: true,
+            enabled: true,
+            hidden: true,
+            device_path: "HID\\VID_057E&PID_2009\\0".to_string(),
+            message: "ok".to_string(),
+        };
+        let json = serde_json::to_string(&status).expect("serialize");
+        assert!(json.contains("\"installed\":true"));
+        assert!(json.contains("\"enabled\":true"));
+        assert!(json.contains("\"hidden\":true"));
+        // JSON escapes backslashes, so a single "\" in the value becomes "\\".
+        assert!(json.contains("\"device_path\":\"HID\\\\VID_057E&PID_2009\\\\0\""));
+        assert!(json.contains("\"message\":\"ok\""));
+    }
+
+    #[test]
+    fn hidhide_status_default_serializes_all_false_and_empty_strings() {
+        let status = HidHideStatus::default();
+        let json = serde_json::to_string(&status).expect("serialize");
+        assert!(json.contains("\"installed\":false"));
+        assert!(json.contains("\"enabled\":false"));
+        assert!(json.contains("\"hidden\":false"));
+        assert!(json.contains("\"device_path\":\"\""));
+        assert!(json.contains("\"message\":\"\""));
+    }
+
+    #[test]
+    fn hidhide_status_clone_is_equal() {
+        let status = HidHideStatus {
+            installed: true,
+            enabled: false,
+            hidden: false,
+            device_path: "dev".to_string(),
+            message: "msg".to_string(),
+        };
+        let cloned = status.clone();
+        assert_eq!(cloned.installed, status.installed);
+        assert_eq!(cloned.enabled, status.enabled);
+        assert_eq!(cloned.hidden, status.hidden);
+        assert_eq!(cloned.device_path, status.device_path);
+        assert_eq!(cloned.message, status.message);
+    }
+
+    // -------------------------------------------------------------------------
+    //  IOCTL constants & helpers
+    // -------------------------------------------------------------------------
 
     #[test]
     fn ioctl_helper_uses_standard_ctl_code_layout() {
         assert_eq!(hidhide_ioctl(0x805), IOCTL_SET_ACTIVE);
         assert_eq!(IOCTL_GET_WHITELIST, ctl_code(0x8000, 0x800, 0, 0));
     }
+
+    #[test]
+    fn ctl_code_matches_windows_macro_formula() {
+        // CTL_CODE(DeviceType, Function, Method, Access) =
+        //   (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
+        assert_eq!(ctl_code(0x8000, 0x800, 0, 0), 0x80002000);
+        assert_eq!(ctl_code(0x8000, 0x801, 0, 0), 0x80002004);
+        // (0x2<<16)|(0x1<<14)|(0x1<<2)|0x3 = 0x24007
+        assert_eq!(ctl_code(0x2, 0x1, 0x3, 0x1), 0x0002_4007);
+    }
+
+    #[test]
+    fn hidhide_ioctl_uses_correct_device_type_and_method() {
+        // device_type 0x8000, method 0 (BUFFERED), access 0 (ANY)
+        // so result = (0x8000 << 16) | (function << 2)
+        assert_eq!(hidhide_ioctl(0), 0x80000000);
+        assert_eq!(hidhide_ioctl(0x800), 0x80002000);
+        assert_eq!(hidhide_ioctl(0x809), 0x80002024);
+    }
+
+    #[test]
+    fn ioctl_constants_are_sequential_and_well_formed() {
+        // Functions 0x800..0x809, each step adds 4 (<< 2).
+        let codes = [
+            IOCTL_GET_WHITELIST,
+            IOCTL_SET_WHITELIST,
+            IOCTL_GET_BLACKLIST,
+            IOCTL_SET_BLACKLIST,
+            IOCTL_GET_ACTIVE,
+            IOCTL_SET_ACTIVE,
+            IOCTL_GET_WLINVERSE,
+            IOCTL_SET_WLINVERSE,
+            IOCTL_ADD_SESSION_BLACKLIST,
+            IOCTL_CLR_SESSION_BLACKLIST,
+        ];
+        for (i, &code) in codes.iter().enumerate() {
+            let function = 0x800u32 + i as u32;
+            assert_eq!(code, hidhide_ioctl(function));
+            assert_eq!(code, 0x80000000 | (function << 2));
+        }
+        // Verify monotonic increase by 4.
+        for w in codes.windows(2) {
+            assert_eq!(w[1] - w[0], 4);
+        }
+    }
+
+    #[test]
+    fn ioctl_get_and_set_blacklist_are_distinct() {
+        assert_ne!(IOCTL_GET_BLACKLIST, IOCTL_SET_BLACKLIST);
+        assert_ne!(IOCTL_GET_WHITELIST, IOCTL_SET_WHITELIST);
+        assert_ne!(IOCTL_GET_ACTIVE, IOCTL_SET_ACTIVE);
+        assert_ne!(IOCTL_GET_WLINVERSE, IOCTL_SET_WLINVERSE);
+    }
+
+    #[test]
+    fn control_device_path_is_expected() {
+        assert_eq!(CONTROL_DEVICE_PATH, r"\\.\HidHide");
+    }
+
+    // -------------------------------------------------------------------------
+    //  multi_sz encode/decode
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn encode_multi_sz_bytes_round_trips_multiple_paths() {
+        let paths = vec![
+            "\\Device\\HarddiskVolume3\\Users\\me\\app.exe".to_string(),
+            "\\Device\\HarddiskVolume3\\Program Files\\other.exe".to_string(),
+        ];
+        let encoded = encode_multi_sz_bytes(&paths);
+        assert_eq!(decode_multi_sz_bytes(&encoded), paths);
+    }
+
+    #[test]
+    fn encode_multi_sz_bytes_empty_list_produces_terminator_only() {
+        let encoded = encode_multi_sz_bytes(&[]);
+        // Just the final double-null terminator.
+        assert_eq!(encoded, vec![0, 0]);
+        assert!(decode_multi_sz_bytes(&encoded).is_empty());
+    }
+
+    #[test]
+    fn encode_multi_sz_bytes_single_string_terminates_correctly() {
+        let paths = vec!["hello".to_string()];
+        let encoded = encode_multi_sz_bytes(&paths);
+        // "hello" = 5 chars * 2 bytes + 2 (null term) + 2 (final null) = 14
+        assert_eq!(encoded.len(), 14);
+        assert_eq!(decode_multi_sz_bytes(&encoded), paths);
+    }
+
+    #[test]
+    fn decode_multi_sz_bytes_handles_empty_input() {
+        assert!(decode_multi_sz_bytes(&[]).is_empty());
+    }
+
+    #[test]
+    fn decode_multi_sz_bytes_handles_no_terminator_gracefully() {
+        // Odd-length input is ignored by chunks_exact; even without final
+        // double-null, a single null-terminated string still decodes.
+        let raw: Vec<u8> = "hi"
+            .encode_utf16()
+            .flat_map(|c| c.to_le_bytes())
+            .chain([0, 0].into_iter())
+            .collect();
+        assert_eq!(decode_multi_sz_bytes(&raw), vec!["hi".to_string()]);
+    }
+
+    #[test]
+    fn encode_multi_sz_bytes_preserves_unicode() {
+        let paths = vec!["café_ñ_emoji😀".to_string()];
+        let encoded = encode_multi_sz_bytes(&paths);
+        assert_eq!(decode_multi_sz_bytes(&encoded), paths);
+    }
+
+    // -------------------------------------------------------------------------
+    //  Wide string helpers
+    // -------------------------------------------------------------------------
 
     #[cfg(windows)]
     #[test]
@@ -660,6 +825,56 @@ mod tests {
         assert_eq!(from_wide(&to_wide(empty)), empty);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn to_wide_is_null_terminated() {
+        let wide = to_wide("abc");
+        assert_eq!(wide.len(), 4); // 3 chars + null
+        assert_eq!(wide[3], 0);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn from_wide_handles_no_null_terminator() {
+        let wide = vec![b'A' as u16, b'B' as u16, b'C' as u16];
+        assert_eq!(from_wide(&wide), "ABC");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn from_wide_handles_embedded_null_only_terminates_at_first() {
+        let wide = vec![b'A' as u16, 0, b'B' as u16, 0];
+        assert_eq!(from_wide(&wide), "A");
+    }
+
+    // -------------------------------------------------------------------------
+    //  Registry path building (string construction only — no registry access)
+    // -------------------------------------------------------------------------
+
+    #[cfg(windows)]
+    #[test]
+    fn registry_service_path_string_is_correct() {
+        // This mirrors the key path used in is_installed(); we only verify
+        // the string content, never open the key.
+        let key_str = r"SYSTEM\CurrentControlSet\Services\HidHide";
+        let wide = to_wide(key_str);
+        assert_eq!(from_wide(&wide), key_str);
+        // First char must be 'S'.
+        assert_eq!(wide[0], 'S' as u16);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn registry_path_wide_encoding_has_null_terminator() {
+        let key_str = r"SYSTEM\CurrentControlSet\Services\HidHide";
+        let wide = to_wide(key_str);
+        assert_eq!(*wide.last().unwrap(), 0);
+    }
+
+    // -------------------------------------------------------------------------
+    //  Pro Controller device path matching / filtering
+    // -------------------------------------------------------------------------
+
     #[test]
     fn pro_controller_detection_matches_expected_vid_pid() {
         assert!(is_pro_controller(
@@ -668,5 +883,102 @@ mod tests {
         assert!(is_pro_controller("hid\\vid&0002057e_pid&2009\\123"));
         assert!(!is_pro_controller("HID\\VID_1234&PID_5678\\foo"));
         assert!(!is_pro_controller("random string"));
+    }
+
+    #[test]
+    fn pro_controller_detection_is_case_insensitive() {
+        assert!(is_pro_controller("HID\\vid_057e&pid_2009\\0"));
+        assert!(is_pro_controller("HID\\VID_057E&PID_2009\\0"));
+        assert!(is_pro_controller("HID\\Vid_057E&Pid_2009\\0"));
+    }
+
+    #[test]
+    fn pro_controller_detection_requires_both_vid_and_pid() {
+        assert!(!is_pro_controller("HID\\VID_057E&PID_9999\\0"));
+        assert!(!is_pro_controller("HID\\VID_9999&PID_2009\\0"));
+        assert!(!is_pro_controller("HID\\VID_057E\\0"));
+        assert!(!is_pro_controller("HID\\PID_2009\\0"));
+    }
+
+    #[test]
+    fn pro_controller_detection_accepts_alt_vid_format() {
+        assert!(is_pro_controller("hid\\vid&0002057e&pid&2009\\0"));
+        assert!(is_pro_controller("HID\\VID&0002057E_PID&2009\\0"));
+    }
+
+    #[test]
+    fn pro_controller_detection_rejects_empty_and_garbage() {
+        assert!(!is_pro_controller(""));
+        assert!(!is_pro_controller("   "));
+        // Note: "VID_057EPID_2009" *does* match because is_pro_controller
+        // only checks for substring presence, not delimiter boundaries.
+        // This is a known characteristic of the matcher.
+        assert!(!is_pro_controller("totally unrelated text"));
+    }
+
+    #[test]
+    fn pro_controller_detection_matches_joycon_vid() {
+        // Joy-Con share VID 057E but have different PIDs; ensure PID_2009
+        // specifically is required.
+        assert!(!is_pro_controller("HID\\VID_057E&PID_2006\\0"));
+        assert!(!is_pro_controller("HID\\VID_057E&PID_2007\\0"));
+    }
+
+    // -------------------------------------------------------------------------
+    //  add_to_whitelist dedup logic (pure helper portion)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn whitelist_dedup_comparison_is_case_insensitive() {
+        // Simulate the comparison logic used in add_to_whitelist without
+        // performing any I/O.
+        let existing = vec!["\\Device\\App.exe".to_string()];
+        let normalized = "\\device\\app.exe".to_lowercase();
+        let already_present = existing
+            .iter()
+            .any(|p| p.to_lowercase() == normalized);
+        assert!(already_present);
+    }
+
+    #[test]
+    fn whitelist_dedup_detects_new_entry() {
+        let existing = vec!["\\Device\\Other.exe".to_string()];
+        let normalized = "\\device\\app.exe".to_lowercase();
+        let already_present = existing
+            .iter()
+            .any(|p| p.to_lowercase() == normalized);
+        assert!(!already_present);
+    }
+
+    // -------------------------------------------------------------------------
+    //  Session blacklist byte encoding (pure computation)
+    // -------------------------------------------------------------------------
+
+    #[cfg(windows)]
+    #[test]
+    fn session_blacklist_wide_to_bytes_is_little_endian_utf16() {
+        let id = "HID\\VID_057E&PID_2009\\0";
+        let wide = to_wide(id);
+        let bytes: Vec<u8> = wide.iter().flat_map(|&c| c.to_le_bytes()).collect();
+        // First two bytes = LE encoding of 'H' (0x48 0x00).
+        assert_eq!(bytes[0], 0x48);
+        assert_eq!(bytes[1], 0x00);
+        // Length = wide.len() * 2 (includes null terminator).
+        assert_eq!(bytes.len(), wide.len() * 2);
+    }
+
+    // -------------------------------------------------------------------------
+    //  GUID constant sanity
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn guid_devclass_hidclass_has_expected_value() {
+        assert_eq!(GUID_DEVCLASS_HIDCLASS.data1, 0x745a17a0);
+        assert_eq!(GUID_DEVCLASS_HIDCLASS.data2, 0x74d3);
+        assert_eq!(GUID_DEVCLASS_HIDCLASS.data3, 0x11d0);
+        assert_eq!(
+            GUID_DEVCLASS_HIDCLASS.data4,
+            [0xb6, 0xfe, 0x00, 0xa0, 0xc9, 0x0f, 0x57, 0xda]
+        );
     }
 }

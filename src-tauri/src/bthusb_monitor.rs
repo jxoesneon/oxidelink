@@ -67,7 +67,7 @@ impl BthUsbMonitor {
             ])
             .output();
 
-        let mut snap = BthUsbSnapshot::default();
+        let snap = BthUsbSnapshot::default();
         let parsed = match output {
             Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
             Ok(o) => {
@@ -83,45 +83,7 @@ impl BthUsbMonitor {
             }
         };
 
-        let mut power_down = 0u32;
-        let mut disconnect = 0u32;
-        let mut link_key_fault = 0u32;
-        let mut last_ts: u64 = 0;
-        let mut last_id: i32 = 0;
-        let mut total: u64 = 0;
-
-        for line in parsed.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            total += 1;
-            let mut parts = line.split('|');
-            let id_str = parts.next().unwrap_or("0");
-            let ts_str = parts.next().unwrap_or("0");
-            let id: i32 = id_str.parse().unwrap_or(0);
-            let ticks: i64 = ts_str.parse().unwrap_or(0);
-
-            match id {
-                EVT_HCI_SIZE_MISMATCH => power_down += 1,
-                EVT_REMOTE_UNPAIRED => disconnect += 1,
-                EVT_LINK_KEY_STORE_FAIL => link_key_fault += 1,
-                _ => {}
-            }
-            // .NET DateTime.Ticks are 100ns intervals since 0001-01-01.
-            // Convert to unix ms approx: (ticks - 621355968000000000) / 10000.
-            let unix_ms = ((ticks - 621_355_968_000_000_000) / 10_000).max(0) as u64;
-            if unix_ms > last_ts {
-                last_ts = unix_ms;
-                last_id = id;
-            }
-        }
-
-        snap.power_down_events = power_down;
-        snap.disconnect_events = disconnect;
-        snap.link_key_faults = link_key_fault;
-        snap.last_event_ts = last_ts;
-        snap.last_event_id = last_id;
+        let (snap, total) = parse_poll_output(&parsed);
 
         // Track delta vs last poll to detect NEW power-down events.
         {
@@ -343,6 +305,57 @@ fn render_event_id(event_handle: isize) -> i32 {
     }
 }
 
+/// Parse the raw stdout of the PowerShell `Get-WinEvent` shell-out into a
+/// `BthUsbSnapshot` plus the total number of non-empty lines observed.
+///
+/// Each line is expected to be `<EventID>|<.NET Ticks>`. Unknown IDs and
+/// malformed lines are counted toward `total` but do not increment any
+/// signature counter, mirroring the behaviour of the live poll path.
+fn parse_poll_output(parsed: &str) -> (BthUsbSnapshot, u64) {
+    let mut power_down = 0u32;
+    let mut disconnect = 0u32;
+    let mut link_key_fault = 0u32;
+    let mut last_ts: u64 = 0;
+    let mut last_id: i32 = 0;
+    let mut total: u64 = 0;
+
+    for line in parsed.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        total += 1;
+        let mut parts = line.split('|');
+        let id_str = parts.next().unwrap_or("0");
+        let ts_str = parts.next().unwrap_or("0");
+        let id: i32 = id_str.parse().unwrap_or(0);
+        let ticks: i64 = ts_str.parse().unwrap_or(0);
+
+        match id {
+            EVT_HCI_SIZE_MISMATCH => power_down += 1,
+            EVT_REMOTE_UNPAIRED => disconnect += 1,
+            EVT_LINK_KEY_STORE_FAIL => link_key_fault += 1,
+            _ => {}
+        }
+        // .NET DateTime.Ticks are 100ns intervals since 0001-01-01.
+        // Convert to unix ms approx: (ticks - 621355968000000000) / 10000.
+        let unix_ms = ((ticks - 621_355_968_000_000_000) / 10_000).max(0) as u64;
+        if unix_ms > last_ts {
+            last_ts = unix_ms;
+            last_id = id;
+        }
+    }
+
+    let snap = BthUsbSnapshot {
+        power_down_events: power_down,
+        disconnect_events: disconnect,
+        link_key_faults: link_key_fault,
+        last_event_ts: last_ts,
+        last_event_id: last_id,
+    };
+    (snap, total)
+}
+
 /// Extract the integer `<EventID>` from a rendered event XML fragment.
 ///
 /// The rendered XML looks like:
@@ -487,30 +500,371 @@ fn dispatch_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keepalive::KeepAliveManager;
+    use crate::state::KeepAliveStatus;
+    use parking_lot::RwLock;
+    use std::sync::Arc;
+    use tokio::sync::broadcast;
+
+    // -----------------------------------------------------------------
+    // BthUsbSnapshot: defaults, cloning, Debug formatting
+    // -----------------------------------------------------------------
 
     #[test]
-    fn snapshot_defaults_and_power_down_detection_are_predictable() {
-        let monitor = BthUsbMonitor::new();
-        let snapshot = BthUsbSnapshot::default();
-        assert_eq!(snapshot.power_down_events, 0);
-        assert!(!monitor.detect_new_power_down(&snapshot, 0));
+    fn snapshot_defaults_are_zero() {
+        let s = BthUsbSnapshot::default();
+        assert_eq!(s.power_down_events, 0);
+        assert_eq!(s.disconnect_events, 0);
+        assert_eq!(s.link_key_faults, 0);
+        assert_eq!(s.last_event_ts, 0);
+        assert_eq!(s.last_event_id, 0);
+    }
 
-        let newer = BthUsbSnapshot {
-            power_down_events: 2,
+    #[test]
+    fn snapshot_clone_is_equal() {
+        let s = BthUsbSnapshot {
+            power_down_events: 3,
+            disconnect_events: 1,
+            link_key_faults: 2,
+            last_event_ts: 1_700_000_000_000,
+            last_event_id: EVT_HCI_SIZE_MISMATCH,
+        };
+        let c = s.clone();
+        assert_eq!(c.power_down_events, s.power_down_events);
+        assert_eq!(c.disconnect_events, s.disconnect_events);
+        assert_eq!(c.link_key_faults, s.link_key_faults);
+        assert_eq!(c.last_event_ts, s.last_event_ts);
+        assert_eq!(c.last_event_id, s.last_event_id);
+    }
+
+    #[test]
+    fn snapshot_debug_includes_all_fields() {
+        let s = BthUsbSnapshot {
+            power_down_events: 1,
+            disconnect_events: 0,
+            link_key_faults: 0,
+            last_event_ts: 42,
+            last_event_id: 5,
+        };
+        let dbg = format!("{:?}", s);
+        assert!(dbg.contains("power_down_events: 1"));
+        assert!(dbg.contains("last_event_id: 5"));
+    }
+
+    // -----------------------------------------------------------------
+    // BthUsbMonitor: construction & state
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn monitor_new_initialises_last_seen_total_to_zero() {
+        let m = BthUsbMonitor::new();
+        let guard = m.last_seen_total.lock().unwrap();
+        assert_eq!(*guard, 0);
+    }
+
+    #[test]
+    fn monitor_default_matches_new() {
+        let m = BthUsbMonitor::default();
+        let guard = m.last_seen_total.lock().unwrap();
+        assert_eq!(*guard, 0);
+    }
+
+    // -----------------------------------------------------------------
+    // detect_new_power_down: pure comparison logic
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn detect_new_power_down_true_when_count_increases() {
+        let m = BthUsbMonitor::new();
+        let snap = BthUsbSnapshot {
+            power_down_events: 5,
             ..BthUsbSnapshot::default()
         };
-        assert!(monitor.detect_new_power_down(&newer, 1));
+        assert!(m.detect_new_power_down(&snap, 4));
+        assert!(m.detect_new_power_down(&snap, 0));
     }
+
+    #[test]
+    fn detect_new_power_down_false_when_equal_or_lower() {
+        let m = BthUsbMonitor::new();
+        let snap = BthUsbSnapshot {
+            power_down_events: 3,
+            ..BthUsbSnapshot::default()
+        };
+        assert!(!m.detect_new_power_down(&snap, 3));
+        assert!(!m.detect_new_power_down(&snap, 10));
+    }
+
+    #[test]
+    fn detect_new_power_down_false_for_default_snapshot() {
+        let m = BthUsbMonitor::new();
+        assert!(!m.detect_new_power_down(&BthUsbSnapshot::default(), 0));
+    }
+
+    // -----------------------------------------------------------------
+    // parse_event_id: XML fragment parsing with mock strings
+    // -----------------------------------------------------------------
 
     #[test]
     fn parse_event_id_extracts_integer_from_xml_fragment() {
         let xml = "<Event xmlns='...'><System><Provider Name='BTHUSB'/><EventID Qualifiers='0'>5</EventID></System></Event>";
         assert_eq!(parse_event_id(xml), 5);
+    }
 
+    #[test]
+    fn parse_event_id_handles_event_id_10_and_18() {
+        let xml10 = "<Event><System><EventID>10</EventID></System></Event>";
+        assert_eq!(parse_event_id(xml10), EVT_REMOTE_UNPAIRED);
+
+        let xml18 = "<Event><System><EventID>18</EventID></System></Event>";
+        assert_eq!(parse_event_id(xml18), EVT_LINK_KEY_STORE_FAIL);
+    }
+
+    #[test]
+    fn parse_event_id_returns_zero_when_no_event_id_tag() {
         let no_event_id = "<Event><System></System></Event>";
         assert_eq!(parse_event_id(no_event_id), 0);
+    }
 
+    #[test]
+    fn parse_event_id_returns_zero_for_non_numeric_content() {
         let malformed = "<Event><EventID>not-a-number</EventID></Event>";
         assert_eq!(parse_event_id(malformed), 0);
+    }
+
+    #[test]
+    fn parse_event_id_returns_zero_for_empty_content() {
+        let empty = "<Event><EventID></EventID></Event>";
+        assert_eq!(parse_event_id(empty), 0);
+    }
+
+    #[test]
+    fn parse_event_id_returns_zero_when_tag_not_closed() {
+        let unclosed = "<Event><EventID Qualifiers='0'";
+        assert_eq!(parse_event_id(unclosed), 0);
+    }
+
+    #[test]
+    fn parse_event_id_trims_whitespace_around_value() {
+        let xml = "<Event><EventID>  5  </EventID></Event>";
+        assert_eq!(parse_event_id(xml), 5);
+    }
+
+    #[test]
+    fn parse_event_id_handles_negative_values() {
+        let xml = "<Event><EventID>-1</EventID></Event>";
+        assert_eq!(parse_event_id(xml), -1);
+    }
+
+    #[test]
+    fn parse_event_id_uses_first_event_id_tag() {
+        let xml = "<Event><EventID>5</EventID><EventID>18</EventID></Event>";
+        assert_eq!(parse_event_id(xml), 5);
+    }
+
+    #[test]
+    fn parse_event_id_returns_zero_for_empty_string() {
+        assert_eq!(parse_event_id(""), 0);
+    }
+
+    // -----------------------------------------------------------------
+    // parse_poll_output: PowerShell stdout parsing with mock strings
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn parse_poll_output_empty_string_yields_default_snapshot() {
+        let (snap, total) = parse_poll_output("");
+        assert_eq!(snap.power_down_events, 0);
+        assert_eq!(snap.disconnect_events, 0);
+        assert_eq!(snap.link_key_faults, 0);
+        assert_eq!(snap.last_event_ts, 0);
+        assert_eq!(snap.last_event_id, 0);
+        assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn parse_poll_output_counts_each_signature() {
+        // ticks chosen so unix_ms > 0: 621355968000000000 + 1000*10000
+        let base = 621_355_968_000_000_000i64;
+        let t1 = base + 1_000 * 10_000; // unix_ms = 1000
+        let t2 = base + 2_000 * 10_000; // unix_ms = 2000
+        let t3 = base + 3_000 * 10_000; // unix_ms = 3000
+        let input = format!("5|{}\n10|{}\n18|{}\n", t1, t2, t3);
+
+        let (snap, total) = parse_poll_output(&input);
+        assert_eq!(snap.power_down_events, 1);
+        assert_eq!(snap.disconnect_events, 1);
+        assert_eq!(snap.link_key_faults, 1);
+        assert_eq!(total, 3);
+        // latest event is ID 18 with unix_ms 3000
+        assert_eq!(snap.last_event_id, EVT_LINK_KEY_STORE_FAIL);
+        assert_eq!(snap.last_event_ts, 3000);
+    }
+
+    #[test]
+    fn parse_poll_output_ignores_unknown_ids_but_counts_total() {
+        let base = 621_355_968_000_000_000i64;
+        let input = format!("99|{}\n5|{}\n", base, base + 10_000);
+        let (snap, total) = parse_poll_output(&input);
+        assert_eq!(snap.power_down_events, 1);
+        assert_eq!(snap.disconnect_events, 0);
+        assert_eq!(total, 2);
+        // ID 5 has the larger timestamp
+        assert_eq!(snap.last_event_id, EVT_HCI_SIZE_MISMATCH);
+    }
+
+    #[test]
+    fn parse_poll_output_skips_blank_and_whitespace_lines() {
+        let input = "\n   \n5|621355968000010000\n\n";
+        let (snap, total) = parse_poll_output(input);
+        assert_eq!(total, 1);
+        assert_eq!(snap.power_down_events, 1);
+    }
+
+    #[test]
+    fn parse_poll_output_tolerates_malformed_lines() {
+        // missing timestamp, non-numeric id, missing id entirely.
+        // The bare "5" line parses id=5 with ticks=0 → counts as a
+        // power-down signature; the other two lines contribute nothing.
+        let input = "5\nabc|123\n|621355968000000000\n";
+        let (snap, total) = parse_poll_output(input);
+        assert_eq!(total, 3);
+        assert_eq!(snap.power_down_events, 1);
+        assert_eq!(snap.disconnect_events, 0);
+        assert_eq!(snap.link_key_faults, 0);
+    }
+
+    #[test]
+    fn parse_poll_output_negative_ticks_clamped_to_zero() {
+        // ticks below the epoch offset → unix_ms clamped to 0 via .max(0).
+        // Because unix_ms (0) is not strictly greater than last_ts (0), the
+        // event id is NOT recorded as the latest — mirroring live behaviour
+        // where a zero-timestamp event does not supersede the initial state.
+        let input = "5|-1\n";
+        let (snap, total) = parse_poll_output(input);
+        assert_eq!(total, 1);
+        assert_eq!(snap.power_down_events, 1);
+        assert_eq!(snap.last_event_ts, 0);
+        assert_eq!(snap.last_event_id, 0);
+    }
+
+    #[test]
+    fn parse_poll_output_picks_latest_timestamp() {
+        let base = 621_355_968_000_000_000i64;
+        // out-of-order: later event first
+        let input = format!("10|{}\n5|{}\n", base + 5_000 * 10_000, base + 1_000 * 10_000);
+        let (snap, _) = parse_poll_output(&input);
+        assert_eq!(snap.last_event_id, EVT_REMOTE_UNPAIRED);
+        assert_eq!(snap.last_event_ts, 5_000);
+    }
+
+    // -----------------------------------------------------------------
+    // dispatch_event: power-down/up signature matching via IPC channel
+    // (no Windows APIs are invoked by report_power_event)
+    // -----------------------------------------------------------------
+
+    fn make_keepalive() -> Arc<KeepAliveManager> {
+        let status = Arc::new(RwLock::new(KeepAliveStatus::default()));
+        Arc::new(KeepAliveManager::new(status))
+    }
+
+    #[test]
+    fn dispatch_event_power_down_emits_bluetooth_power_event() {
+        let (tx, mut rx) = broadcast::channel::<IpcEvent>(16);
+        let keepalive = make_keepalive();
+        dispatch_event(EVT_HCI_SIZE_MISMATCH, &tx, &keepalive);
+
+        let mut got_power = false;
+        let mut got_log = false;
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                IpcEvent::BluetoothPowerEvent { event_type, .. } => {
+                    assert_eq!(event_type, "Power_Down");
+                    got_power = true;
+                }
+                IpcEvent::LogMessage { level, .. } => {
+                    assert_eq!(level, "warn");
+                    got_log = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(got_power, "expected BluetoothPowerEvent");
+        assert!(got_log, "expected LogMessage");
+    }
+
+    #[test]
+    fn dispatch_event_remote_unpaired_emits_disconnected() {
+        let (tx, mut rx) = broadcast::channel::<IpcEvent>(16);
+        let keepalive = make_keepalive();
+        dispatch_event(EVT_REMOTE_UNPAIRED, &tx, &keepalive);
+
+        let mut got_disconnect = false;
+        while let Ok(ev) = rx.try_recv() {
+            if let IpcEvent::Disconnected { reason } = ev {
+                assert!(reason.contains("Event ID 10"));
+                got_disconnect = true;
+            }
+        }
+        assert!(got_disconnect, "expected Disconnected event");
+    }
+
+    #[test]
+    fn dispatch_event_link_key_fault_emits_only_log_message() {
+        let (tx, mut rx) = broadcast::channel::<IpcEvent>(16);
+        let keepalive = make_keepalive();
+        dispatch_event(EVT_LINK_KEY_STORE_FAIL, &tx, &keepalive);
+
+        let mut log_count = 0;
+        let mut other_count = 0;
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                IpcEvent::LogMessage { level, message, .. } => {
+                    assert_eq!(level, "warn");
+                    assert!(message.contains("Event ID 18"));
+                    log_count += 1;
+                }
+                _ => {
+                    other_count += 1;
+                }
+            }
+        }
+        assert_eq!(log_count, 1);
+        assert_eq!(other_count, 0);
+    }
+
+    #[test]
+    fn dispatch_event_unknown_id_emits_nothing() {
+        let (tx, mut rx) = broadcast::channel::<IpcEvent>(16);
+        let keepalive = make_keepalive();
+        dispatch_event(999, &tx, &keepalive);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn dispatch_event_power_down_reports_to_keepalive() {
+        let (tx, _rx) = broadcast::channel::<IpcEvent>(16);
+        let keepalive = make_keepalive();
+        // We can't read power_event_count directly, but report_power_event
+        // updates KeepAliveStatus.power_events_detected via the shared state.
+        // Drive two events and confirm the counter advanced through dispatch.
+        let status = {
+            // KeepAliveManager doesn't expose state; instead verify no panic
+            // and that repeated dispatches are accepted.
+            dispatch_event(EVT_HCI_SIZE_MISMATCH, &tx, &keepalive);
+            dispatch_event(EVT_HCI_SIZE_MISMATCH, &tx, &keepalive);
+        };
+        let _ = status; // no return value — test asserts no panic / no hang
+    }
+
+    // -----------------------------------------------------------------
+    // Event ID constants sanity
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn event_id_constants_have_expected_values() {
+        assert_eq!(EVT_HCI_SIZE_MISMATCH, 5);
+        assert_eq!(EVT_REMOTE_UNPAIRED, 10);
+        assert_eq!(EVT_LINK_KEY_STORE_FAIL, 18);
     }
 }

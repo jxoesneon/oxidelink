@@ -1918,6 +1918,7 @@ mod tests {
     use parking_lot::Mutex;
     use std::collections::HashSet;
     use std::sync::Arc;
+    use std::time::Duration;
     use tokio::sync::broadcast;
 
     #[test]
@@ -2185,5 +2186,836 @@ mod tests {
         let result = validate_controller_state(CONTROLLER_SLOTS, &mut state, &cfg, true, true);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("slot"));
+    }
+
+    // -----------------------------------------------------------------------
+    // fallback_normalize — pure linear normalization from 12-bit ADC to [-1,1]
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fallback_normalize_center_is_zero() {
+        let (lx, ly, rx, ry) = super::fallback_normalize(2048, 2048, 2048, 2048);
+        assert!((lx - 0.0).abs() < 1e-6);
+        assert!((ly - 0.0).abs() < 1e-6);
+        assert!((rx - 0.0).abs() < 1e-6);
+        assert!((ry - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn fallback_normalize_max_is_one() {
+        let (lx, ly, rx, ry) = super::fallback_normalize(4095, 4095, 4095, 4095);
+        assert!((lx - 1.0).abs() < 1e-3);
+        assert!((ly - 1.0).abs() < 1e-3);
+        assert!((rx - 1.0).abs() < 1e-3);
+        assert!((ry - 1.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn fallback_normalize_min_is_neg_one() {
+        let (lx, ly, rx, ry) = super::fallback_normalize(0, 0, 0, 0);
+        assert!((lx - (-1.0)).abs() < 1e-3);
+        assert!((ly - (-1.0)).abs() < 1e-3);
+        assert!((rx - (-1.0)).abs() < 1e-3);
+        assert!((ry - (-1.0)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn fallback_normalize_clamps_overshoot() {
+        // Values above 4095 are not possible with u16, but the clamp ensures
+        // that values near the extremes map to exactly ±1.0.
+        let (lx, _, _, _) = super::fallback_normalize(4096, 2048, 2048, 2048);
+        assert!((lx - 1.0).abs() < 1e-6, "4096 should clamp to 1.0, got {}", lx);
+    }
+
+    #[test]
+    fn fallback_normalize_midpoint_is_half() {
+        let (lx, _, _, _) = super::fallback_normalize(3072, 2048, 2048, 2048);
+        assert!((lx - 0.5).abs() < 1e-3, "3072 should map to ~0.5, got {}", lx);
+    }
+
+    // -----------------------------------------------------------------------
+    // battery_health_label — all 5 levels + charging bit masking
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn battery_health_label_all_levels() {
+        use super::battery_health_label;
+
+        // Level 0 (raw >> 1 == 0) → Empty
+        assert_eq!(battery_health_label(0x00), "Empty");
+        // Level 1 (raw >> 1 == 1) → Critical
+        assert_eq!(battery_health_label(0x02), "Critical");
+        // Level 2 (raw >> 1 == 2) → Low
+        assert_eq!(battery_health_label(0x04), "Low");
+        // Level 3 (raw >> 1 == 3) → Medium
+        assert_eq!(battery_health_label(0x06), "Medium");
+        // Level 4+ (raw >> 1 >= 4) → Full
+        assert_eq!(battery_health_label(0x08), "Full");
+        assert_eq!(battery_health_label(0x0E), "Full");
+    }
+
+    #[test]
+    fn battery_health_label_masks_charging_bit() {
+        use super::battery_health_label;
+
+        // Bit 0 is the charging flag; it should be masked out.
+        // 0x09 = level 4 (Full) + charging bit → "Full"
+        assert_eq!(battery_health_label(0x09), "Full");
+        // 0x01 = level 0 (Empty) + charging bit → "Empty"
+        assert_eq!(battery_health_label(0x01), "Empty");
+        // 0x03 = level 1 (Critical) + charging bit → "Critical"
+        assert_eq!(battery_health_label(0x03), "Critical");
+    }
+
+    // -----------------------------------------------------------------------
+    // lowest_free_slot — additional edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lowest_free_slot_all_combinations() {
+        use super::lowest_free_slot;
+
+        // Every possible 4-bit mask (CONTROLLER_SLOTS == 4)
+        for mask in 0..=0x0F_u8 {
+            let result = lowest_free_slot(mask);
+            // Find the expected lowest unset bit manually.
+            let expected = (0..CONTROLLER_SLOTS)
+                .find(|&i| mask & (1 << i) == 0)
+                .map(|i| i as u8);
+            assert_eq!(result, expected, "mask={:#06b}", mask);
+        }
+    }
+
+    #[test]
+    fn lowest_free_slot_ignores_high_bits() {
+        use super::lowest_free_slot;
+
+        // Bits above slot 3 should be ignored — slot 0 is still free.
+        assert_eq!(lowest_free_slot(0b1111_0000), Some(0));
+        // All 4 slots used, high bits set → None.
+        assert_eq!(lowest_free_slot(0b1111_1111), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_controller_state — additional branch coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn validate_controller_enable_real_device_checks_alone_suffices() {
+        use crate::state::{AppConfig, ValidationConfig};
+
+        let mut state = ControllerState { connected: true, ..Default::default() };
+        let cfg = AppConfig {
+            validation: ValidationConfig {
+                enable_real_device_checks: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(validate_controller_state(0, &mut state, &cfg, true, true).unwrap());
+        assert!(state.validated);
+    }
+
+    #[test]
+    fn validate_controller_strict_cal_with_invalid_cal_fails() {
+        use crate::state::{AppConfig, StickCalibration, ValidationConfig};
+
+        let mut state = ControllerState {
+            connected: true,
+            stick_calibration: Some(StickCalibration {
+                valid: false,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let cfg = AppConfig {
+            real_device_validation: true,
+            validation: ValidationConfig {
+                enable_real_device_checks: true,
+                strict_calibration_requirements: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let result = validate_controller_state(0, &mut state, &cfg, true, true);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("calibration"));
+        assert!(!state.validated);
+    }
+
+    #[test]
+    fn validate_controller_require_vigembus_only() {
+        use crate::state::{AppConfig, ValidationConfig};
+
+        let mut state = ControllerState { connected: true, ..Default::default() };
+        let cfg = AppConfig {
+            real_device_validation: true,
+            validation: ValidationConfig {
+                enable_real_device_checks: true,
+                require_vigembus: true,
+                require_hidhide: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // ViGEmBus missing → fail.
+        let result = validate_controller_state(0, &mut state, &cfg, false, false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("ViGEmBus"));
+
+        // ViGEmBus present → pass (HidHide not required).
+        assert!(validate_controller_state(0, &mut state, &cfg, true, false).unwrap());
+        assert!(state.validated);
+    }
+
+    #[test]
+    fn validate_controller_require_hidhide_only() {
+        use crate::state::{AppConfig, ValidationConfig};
+
+        let mut state = ControllerState { connected: true, ..Default::default() };
+        let cfg = AppConfig {
+            real_device_validation: true,
+            validation: ValidationConfig {
+                enable_real_device_checks: true,
+                require_vigembus: false,
+                require_hidhide: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // HidHide missing → fail.
+        let result = validate_controller_state(0, &mut state, &cfg, true, false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("HidHide"));
+
+        // HidHide present → pass.
+        assert!(validate_controller_state(0, &mut state, &cfg, false, true).unwrap());
+        assert!(state.validated);
+    }
+
+    #[test]
+    fn validate_controller_no_strict_cal_passes_without_calibration() {
+        use crate::state::{AppConfig, ValidationConfig};
+
+        let mut state = ControllerState { connected: true, ..Default::default() };
+        let cfg = AppConfig {
+            real_device_validation: true,
+            validation: ValidationConfig {
+                enable_real_device_checks: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // strict_calibration_requirements is false by default.
+        // No stick calibration set, but should still pass.
+
+        assert!(validate_controller_state(0, &mut state, &cfg, false, false).unwrap());
+        assert!(state.validated);
+    }
+
+    // -----------------------------------------------------------------------
+    // controller_output_is_allowed — additional branches
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn controller_output_allowed_when_validated() {
+        use crate::state::AppConfig;
+
+        let config = AppConfig {
+            real_device_validation: true,
+            ..Default::default()
+        };
+        let controller = ControllerState {
+            validated: true,
+            ..Default::default()
+        };
+        assert!(controller_output_is_allowed(&config, &controller));
+    }
+
+    #[test]
+    fn controller_output_allowed_when_validation_disabled() {
+        use crate::state::AppConfig;
+
+        let config = AppConfig::default();
+        let controller = ControllerState::default();
+        // real_device_validation defaults to false.
+        assert!(controller_output_is_allowed(&config, &controller));
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_report — input report parsing and dispatching with mock data
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn handle_report_empty_data_is_noop() {
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Empty slice should return immediately without panicking.
+        loop_instance.handle_report(&[]);
+    }
+
+    #[test]
+    fn handle_report_unknown_report_id_does_not_panic() {
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Report ID 0xFF is not handled — should just log debug.
+        let data = [0xFFu8, 0x01, 0x02, 0x03];
+        loop_instance.handle_report(&data);
+    }
+
+    #[test]
+    fn handle_report_standard_report_updates_state() {
+        use crate::mock::MockGenerator;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        let mock = MockGenerator::new();
+        let report = mock.build_full_standard_report();
+
+        loop_instance.handle_report(&report);
+
+        // After processing a standard report, the controller state should be
+        // updated: connected == true, battery parsed, buttons set.
+        let state = shared.slots[0].read();
+        assert!(state.connected, "state.connected should be true after report");
+        assert!(state.battery_percent > 0, "battery_percent should be > 0");
+        // The mock report rotates face buttons (Y/X/B/A). At step 1, X is pressed.
+        let any_button = state.buttons.a || state.buttons.b
+            || state.buttons.x || state.buttons.y;
+        assert!(any_button, "at least one face button should be pressed");
+    }
+
+    #[test]
+    fn handle_report_imu_standard_report_populates_imu() {
+        use crate::mock::MockGenerator;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        let mock = MockGenerator::new();
+        let report = mock.build_imu_standard_report();
+
+        loop_instance.handle_report(&report);
+
+        let state = shared.slots[0].read();
+        assert!(state.imu.is_some(), "IMU data should be populated");
+        let imu = state.imu.as_ref().unwrap();
+        assert_eq!(imu.frames.len(), 3, "should have 3 IMU frames");
+        // Frame 0: accel_z should be 4096 (gravity).
+        assert_eq!(imu.frames[0].accel_z, 4096);
+    }
+
+    #[test]
+    fn handle_report_standard_report_emits_controller_state_event() {
+        use crate::mock::MockGenerator;
+        use crate::state::IpcEvent;
+
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        let mock = MockGenerator::new();
+        let report = mock.build_full_standard_report();
+
+        loop_instance.handle_report(&report);
+
+        // Drain events and check for ControllerState.
+        let mut found_controller_state = false;
+        let mut found_connection_quality = false;
+        while let Ok(ev) = rx.try_recv() {
+            if matches!(ev, IpcEvent::ControllerState { .. }) {
+                found_controller_state = true;
+            }
+            if matches!(ev, IpcEvent::ConnectionQuality { .. }) {
+                found_connection_quality = true;
+            }
+        }
+        assert!(found_controller_state, "ControllerState event should be emitted");
+        assert!(found_connection_quality, "ConnectionQuality event should be emitted");
+    }
+
+    #[test]
+    fn handle_report_nfc_ir_report_clears_or_sets_tag() {
+        use crate::hid_parser::REPORT_ID_NFC_IR;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Pre-set a tag in state.
+        {
+            let mut state = shared.slots[0].write();
+            state.nfc.tag_present = true;
+        }
+
+        // Send a minimal NFC/IR report with no payload — should clear the tag.
+        let data = [REPORT_ID_NFC_IR];
+        loop_instance.handle_report(&data);
+
+        let state = shared.slots[0].read();
+        assert!(!state.nfc.tag_present, "NFC tag should be cleared");
+    }
+
+    #[test]
+    fn handle_report_usb_reply_short_data_does_not_panic() {
+        use crate::hid_parser::REPORT_ID_USB_REPLY;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // USB reply with only 1 byte (too short) — should log warning, not panic.
+        let data = [REPORT_ID_USB_REPLY];
+        loop_instance.handle_report(&data);
+
+        // USB reply with 2 bytes — should parse command ID.
+        let data = [REPORT_ID_USB_REPLY, 0x04];
+        loop_instance.handle_report(&data);
+    }
+
+    #[test]
+    fn handle_report_multiple_standard_reports_increment_packets() {
+        use crate::mock::MockGenerator;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        let mock = MockGenerator::new();
+
+        // Process 3 reports.
+        for _ in 0..3 {
+            let report = mock.build_full_standard_report();
+            loop_instance.handle_report(&report);
+        }
+
+        let state = shared.slots[0].read();
+        assert!(
+            state.connection_quality.total_packets >= 3,
+            "total_packets should be >= 3, got {}",
+            state.connection_quality.total_packets
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // update_connection_quality — timer gap / dropped frame detection
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn update_connection_quality_increments_total_packets() {
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        {
+            let mut state = shared.slots[0].write();
+            let initial = state.connection_quality.total_packets;
+            loop_instance.update_connection_quality(&mut state, 0x01);
+            assert_eq!(
+                state.connection_quality.total_packets,
+                initial.wrapping_add(1)
+            );
+        }
+    }
+
+    #[test]
+    fn update_connection_quality_detects_dropped_frames() {
+        use std::thread::sleep;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        {
+            let mut state = shared.slots[0].write();
+            // First report — sets last_report_timer.
+            loop_instance.update_connection_quality(&mut state, 0x01);
+            assert_eq!(state.connection_quality.dropped, 0);
+
+            // Sleep >1ms so elapsed_ms > 0 and the timer-delta check runs.
+            sleep(Duration::from_millis(5));
+
+            // Second report with a large timer jump (0x01 → 0x10 = delta 15).
+            // Delta > 2 → should count as dropped.
+            loop_instance.update_connection_quality(&mut state, 0x10);
+            assert_eq!(
+                state.connection_quality.dropped, 1,
+                "large timer gap should count as dropped"
+            );
+        }
+    }
+
+    #[test]
+    fn update_connection_quality_normal_timer_gap_no_drop() {
+        use std::thread::sleep;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        {
+            let mut state = shared.slots[0].write();
+            // First report.
+            loop_instance.update_connection_quality(&mut state, 0x01);
+            sleep(Duration::from_millis(5));
+            // Second report with normal gap (delta 1).
+            loop_instance.update_connection_quality(&mut state, 0x02);
+            assert_eq!(state.connection_quality.dropped, 0);
+            sleep(Duration::from_millis(5));
+            // Third report with delta 2 (still within 0..=2 range).
+            loop_instance.update_connection_quality(&mut state, 0x04);
+            assert_eq!(state.connection_quality.dropped, 0);
+        }
+    }
+
+    #[test]
+    fn update_connection_quality_wrapping_timer() {
+        use std::thread::sleep;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        {
+            let mut state = shared.slots[0].write();
+            // Timer near wraparound: 0xFE → 0x00 (wrapping_sub gives 2, within range).
+            loop_instance.update_connection_quality(&mut state, 0xFE);
+            sleep(Duration::from_millis(5));
+            loop_instance.update_connection_quality(&mut state, 0x00);
+            assert_eq!(state.connection_quality.dropped, 0);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // emit_device_info — connection type string mapping
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn emit_device_info_sets_connection_string() {
+        use crate::state::{ConnectionType, DeviceInfo};
+
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Set up state with device info and USB connection.
+        {
+            let mut state = shared.slots[0].write();
+            state.device_info = Some(DeviceInfo {
+                firmware_version: "1.0".into(),
+                ..Default::default()
+            });
+            state.connection_type = ConnectionType::Usb;
+        }
+
+        let state = shared.slots[0].read().clone();
+        loop_instance.emit_device_info(&state);
+
+        // Check that a DeviceInfo event was emitted with "USB" connection.
+        let mut found = false;
+        while let Ok(ev) = rx.try_recv() {
+            if let crate::state::IpcEvent::DeviceInfo { data } = ev {
+                assert_eq!(data.connection, "USB");
+                found = true;
+            }
+        }
+        assert!(found, "DeviceInfo event should be emitted");
+    }
+
+    #[test]
+    fn emit_device_info_bluetooth_connection_string() {
+        use crate::state::{ConnectionType, DeviceInfo};
+
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        {
+            let mut state = shared.slots[0].write();
+            state.device_info = Some(DeviceInfo::default());
+            state.connection_type = ConnectionType::Bluetooth;
+        }
+
+        let state = shared.slots[0].read().clone();
+        loop_instance.emit_device_info(&state);
+
+        let mut found = false;
+        while let Ok(ev) = rx.try_recv() {
+            if let crate::state::IpcEvent::DeviceInfo { data } = ev {
+                assert_eq!(data.connection, "Bluetooth");
+                found = true;
+            }
+        }
+        assert!(found, "DeviceInfo event should be emitted for Bluetooth");
+    }
+
+    #[test]
+    fn emit_device_info_no_event_when_device_info_is_none() {
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // device_info is None by default — should not emit.
+        let state = shared.slots[0].read().clone();
+        loop_instance.emit_device_info(&state);
+
+        assert!(rx.try_recv().is_err(), "no event should be emitted");
+    }
+
+    #[test]
+    fn emit_device_info_marks_calibration_when_stick_cal_present() {
+        use crate::state::{DeviceInfo, SpiInfo, StickCalibration};
+
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        {
+            let mut state = shared.slots[0].write();
+            state.device_info = Some(DeviceInfo {
+                spi: Some(SpiInfo::default()),
+                ..Default::default()
+            });
+            state.stick_calibration = Some(StickCalibration {
+                valid: true,
+                ..Default::default()
+            });
+        }
+
+        let state = shared.slots[0].read().clone();
+        loop_instance.emit_device_info(&state);
+
+        let mut found = false;
+        while let Ok(ev) = rx.try_recv() {
+            if let crate::state::IpcEvent::DeviceInfo { data } = ev {
+                if let Some(spi) = data.spi {
+                    assert!(spi.calibration, "calibration should be true");
+                    found = true;
+                }
+            }
+        }
+        assert!(found, "DeviceInfo with calibration flag should be emitted");
+    }
+
+    // -----------------------------------------------------------------------
+    // IMU processing math — raw_to_physical with mock IMU data
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn imu_raw_to_physical_default_scales() {
+        use crate::hid_parser::ImuFrame;
+        use crate::imu;
+
+        let frame = ImuFrame {
+            accel_x: 4096,
+            accel_y: 0,
+            accel_z: 4096,
+            gyro_x: 13371,
+            gyro_y: 0,
+            gyro_z: 0,
+        };
+        let physical = imu::raw_to_physical(&frame);
+        // accel_z = 4096 * (1/4096) = 1.0 g (gravity)
+        assert!((physical.accel_z - 1.0).abs() < 1e-6, "accel_z should be ~1.0g");
+        // gyro_x = 13371 * (1/13371) = 1.0 deg/s
+        assert!((physical.gyro_x - 1.0).abs() < 1e-6, "gyro_x should be ~1.0 dps");
+        // accel_y = 0
+        assert!((physical.accel_y - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn imu_raw_to_physical_calibrated_with_factory_cal() {
+        use crate::hid_parser::ImuFrame;
+        use crate::imu;
+        use crate::state::ImuCalibration;
+
+        let frame = ImuFrame {
+            accel_x: 1000,
+            accel_y: 0,
+            accel_z: 4096,
+            gyro_x: 100,
+            gyro_y: 0,
+            gyro_z: 0,
+        };
+        // Realistic factory calibration values.
+        let cal = ImuCalibration {
+            accel_origin: [0, 0, 0],
+            accel_sensitivity: [16384, 16384, 16384],
+            gyro_origin: [0, 0, 0],
+            gyro_sensitivity: [13371, 13371, 13371],
+            ..Default::default()
+        };
+        let physical = imu::raw_to_physical_calibrated(&frame, &cal);
+        // accel_x = 1000 * (1/(16384-0) * 4) = 1000 * 4/16384 ≈ 0.244
+        let expected_ax = 1000.0 * 4.0 / 16384.0;
+        assert!(
+            (physical.accel_x - expected_ax).abs() < 1e-4,
+            "accel_x should be ~{}, got {}",
+            expected_ax,
+            physical.accel_x
+        );
+        // gyro_x = (100 - 0) * (936 / (13371 - 0)) ≈ 7.0
+        let expected_gx = 100.0 * 936.0 / 13371.0;
+        assert!(
+            (physical.gyro_x - expected_gx).abs() < 1e-2,
+            "gyro_x should be ~{}, got {}",
+            expected_gx,
+            physical.gyro_x
+        );
+    }
+
+    #[test]
+    fn imu_raw_to_physical_calibrated_degenerate_falls_back() {
+        use crate::hid_parser::ImuFrame;
+        use crate::imu;
+        use crate::state::ImuCalibration;
+
+        let frame = ImuFrame {
+            accel_x: 4096,
+            accel_y: 0,
+            accel_z: 4096,
+            gyro_x: 13371,
+            gyro_y: 0,
+            gyro_z: 0,
+        };
+        // Degenerate calibration: sensitivity == origin → should use default scale.
+        let cal = ImuCalibration {
+            accel_origin: [100, 100, 100],
+            accel_sensitivity: [100, 100, 100], // diff < 10 → fallback
+            gyro_origin: [200, 200, 200],
+            gyro_sensitivity: [200, 200, 200], // diff < 10 → fallback
+            ..Default::default()
+        };
+        let physical = imu::raw_to_physical_calibrated(&frame, &cal);
+        // Should match the uncalibrated default.
+        let default_physical = imu::raw_to_physical(&frame);
+        assert!((physical.accel_x - default_physical.accel_x).abs() < 1e-6);
+        assert!((physical.gyro_x - default_physical.gyro_x).abs() < 1e-6);
+    }
+
+    #[test]
+    fn imu_calculate_tilt_flat_is_zero() {
+        use crate::hid_parser::ImuFrame;
+        use crate::imu;
+
+        // Flat: gravity on Z, no tilt.
+        let frame = ImuFrame {
+            accel_x: 0,
+            accel_y: 0,
+            accel_z: 4096,
+            gyro_x: 0,
+            gyro_y: 0,
+            gyro_z: 0,
+        };
+        let physical = imu::raw_to_physical(&frame);
+        let (pitch, roll) = imu::calculate_tilt(&physical);
+        assert!((pitch - 0.0).abs() < 1e-3, "pitch should be ~0, got {}", pitch);
+        assert!((roll - 0.0).abs() < 1e-3, "roll should be ~0, got {}", roll);
+    }
+
+    #[test]
+    fn imu_calculate_tilt_forward_pitch() {
+        use crate::hid_parser::ImuFrame;
+        use crate::imu;
+
+        // Tilt forward: gravity on Y (positive pitch).
+        let frame = ImuFrame {
+            accel_x: 0,
+            accel_y: 4096,
+            accel_z: 0,
+            gyro_x: 0,
+            gyro_y: 0,
+            gyro_z: 0,
+        };
+        let physical = imu::raw_to_physical(&frame);
+        let (pitch, _roll) = imu::calculate_tilt(&physical);
+        // pitch = atan2(y, z) = atan2(1.0, 0.0) = 90 degrees
+        assert!((pitch - 90.0).abs() < 1e-2, "pitch should be ~90, got {}", pitch);
+    }
+
+    #[test]
+    fn imu_tilt_estimator_converges() {
+        use crate::hid_parser::ImuFrame;
+        use crate::imu::{self, TiltEstimator};
+
+        let mut estimator = TiltEstimator::new(0.98);
+        // Simulate a flat position for many iterations — should converge to ~0.
+        let frame = ImuFrame {
+            accel_x: 0,
+            accel_y: 0,
+            accel_z: 4096,
+            gyro_x: 0,
+            gyro_y: 0,
+            gyro_z: 0,
+        };
+        let dt = 1.0 / 180.0;
+        for _ in 0..100 {
+            let physical = imu::raw_to_physical(&frame);
+            estimator.update(&physical, &physical, dt);
+        }
+        let (pitch, roll) = estimator.get_tilt();
+        assert!((pitch - 0.0).abs() < 1.0, "pitch should converge to ~0, got {}", pitch);
+        assert!((roll - 0.0).abs() < 1.0, "roll should converge to ~0, got {}", roll);
+    }
+
+    // -----------------------------------------------------------------------
+    // set_connected — slot state management
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn set_connected_true_sets_slot_active() {
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 1, None);
+
+        assert!(!shared.is_slot_active(1));
+        loop_instance.set_connected(true);
+        assert!(shared.is_slot_active(1));
+
+        // Clean up.
+        loop_instance.set_connected(false);
+        assert!(!shared.is_slot_active(1));
+    }
+
+    #[test]
+    fn set_connected_false_without_claimed_path_is_safe() {
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 2, None);
+
+        // No claimed path set — should not panic.
+        loop_instance.set_connected(false);
+        assert!(!shared.is_slot_active(2));
+    }
+
+    // -----------------------------------------------------------------------
+    // DeviceLoop construction — manager vs worker slot
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn device_loop_new_creates_manager_slot() {
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::new(shared, tx);
+        assert_eq!(loop_instance.slot, super::MANAGER_SLOT);
+    }
+
+    #[test]
+    fn device_loop_with_slot_creates_worker_slot() {
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 2, None);
+        assert_eq!(loop_instance.slot, 2);
     }
 }

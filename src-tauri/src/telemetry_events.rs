@@ -406,6 +406,10 @@ pub fn record_telemetry_event(name: String, payload: Value) -> Result<bool, Stri
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::Mutex;
+
+    /// Serializes tests that mutate the `OXIDELINK_TELEMETRY_FILE` env var.
+    static ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     // -----------------------------------------------------------------------
     //  Constants
@@ -840,13 +844,14 @@ mod tests {
 
     #[test]
     fn telemetry_file_from_env_unset_returns_none() {
-        // Remove var if present to test the unset path deterministically.
+        let _guard = ENV_TEST_MUTEX.lock().unwrap();
         std::env::remove_var("OXIDELINK_TELEMETRY_FILE");
         assert!(telemetry_file_from_env().is_none());
     }
 
     #[test]
     fn telemetry_file_from_env_empty_returns_none() {
+        let _guard = ENV_TEST_MUTEX.lock().unwrap();
         std::env::set_var("OXIDELINK_TELEMETRY_FILE", "");
         assert!(telemetry_file_from_env().is_none());
         std::env::remove_var("OXIDELINK_TELEMETRY_FILE");
@@ -854,6 +859,7 @@ mod tests {
 
     #[test]
     fn telemetry_file_from_env_set_returns_path() {
+        let _guard = ENV_TEST_MUTEX.lock().unwrap();
         std::env::set_var("OXIDELINK_TELEMETRY_FILE", "/tmp/tel.json");
         let p = telemetry_file_from_env().expect("should be Some");
         assert_eq!(p, PathBuf::from("/tmp/tel.json"));

@@ -211,6 +211,13 @@ fn init_sentry(dsn: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sentry::protocol::{Context, Exception, Frame, OsContext, Request, User, Values};
+    use std::borrow::Cow;
+    use sentry::protocol::Value;
+    use std::sync::Mutex;
+
+    /// Serializes tests that mutate the global `CRASH_ENABLED` flag.
+    static CRASH_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn empty_dsn_initialization_does_not_panic() {
@@ -267,6 +274,376 @@ mod tests {
         assert!(out.contains("<PATH>"));
         assert!(out.contains("<IP>"));
         assert!(out.contains("<SERIAL>"));
+    }
+
+    // -----------------------------------------------------------------------
+    // CrashReportingStatus serialization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn crash_reporting_status_serializes_expected_fields() {
+        let st = CrashReportingStatus {
+            enabled: true,
+            test_mode: false,
+            dsn: Some("test".to_string()),
+        };
+        let json = serde_json::to_string(&st).expect("serialize");
+        assert!(json.contains("\"enabled\":true"));
+        assert!(json.contains("\"test_mode\":false"));
+        assert!(json.contains("\"dsn\":\"test\""));
+    }
+
+    #[test]
+    fn crash_reporting_status_serializes_none_dsn() {
+        let st = CrashReportingStatus {
+            enabled: false,
+            test_mode: false,
+            dsn: None,
+        };
+        let json = serde_json::to_string(&st).expect("serialize");
+        assert!(json.contains("\"enabled\":false"));
+        assert!(json.contains("\"dsn\":null"));
+    }
+
+    #[test]
+    fn crash_reporting_status_clones_correctly() {
+        let st = CrashReportingStatus {
+            enabled: true,
+            test_mode: true,
+            dsn: Some("test".to_string()),
+        };
+        let cloned = st.clone();
+        assert_eq!(st.enabled, cloned.enabled);
+        assert_eq!(st.test_mode, cloned.test_mode);
+        assert_eq!(st.dsn, cloned.dsn);
+    }
+
+    // -----------------------------------------------------------------------
+    // DSN validation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn validate_dsn_rejects_empty_string() {
+        assert!(!validate_dsn(""));
+    }
+
+    #[test]
+    fn validate_dsn_accepts_test_variants() {
+        assert!(validate_dsn("test"));
+        assert!(validate_dsn("TEST"));
+        assert!(validate_dsn("Test"));
+        assert!(validate_dsn("test://anything"));
+    }
+
+    #[test]
+    fn validate_dsn_accepts_valid_sentry_dsn() {
+        let dsn = "https://public@o447951.ingest.sentry.io/5439417";
+        assert!(validate_dsn(dsn));
+    }
+
+    #[test]
+    fn validate_dsn_rejects_invalid_formats() {
+        assert!(!validate_dsn("not a dsn"));
+        assert!(!validate_dsn("http://"));
+        assert!(!validate_dsn("ftp://example.com"));
+        assert!(!validate_dsn("garbage"));
+        assert!(!validate_dsn("https://"));
+    }
+
+    // -----------------------------------------------------------------------
+    // is_test_dsn helper
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_test_dsn_handles_none() {
+        assert!(!is_test_dsn(None));
+    }
+
+    #[test]
+    fn is_test_dsn_recognizes_test_literal_case_insensitive() {
+        assert!(is_test_dsn(Some("test")));
+        assert!(is_test_dsn(Some("TEST")));
+        assert!(is_test_dsn(Some("TeSt")));
+    }
+
+    #[test]
+    fn is_test_dsn_recognizes_test_scheme() {
+        assert!(is_test_dsn(Some("test://foo")));
+        assert!(is_test_dsn(Some("test://")));
+    }
+
+    #[test]
+    fn is_test_dsn_rejects_other_values() {
+        assert!(!is_test_dsn(Some("")));
+        assert!(!is_test_dsn(Some("other")));
+        assert!(!is_test_dsn(Some("https://o447951.ingest.sentry.io/5439417")));
+    }
+
+    // -----------------------------------------------------------------------
+    // PII scrubbing
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scrub_pii_passes_through_clean_text() {
+        let input = "nothing sensitive here";
+        assert_eq!(scrub_pii(input), input);
+    }
+
+    #[test]
+    fn scrub_pii_handles_empty_string() {
+        assert_eq!(scrub_pii(""), "");
+    }
+
+    #[test]
+    fn scrub_pii_redacts_mac_addresses() {
+        let out = scrub_pii("mac 00:1A:2B:3C:4D:5E and 01-23-45-67-89-ab");
+        assert!(out.contains("<MAC>"));
+        assert!(!out.contains("00:1A:2B"));
+        assert!(!out.contains("01-23-45"));
+    }
+
+    #[test]
+    fn scrub_pii_redacts_ipv4_addresses() {
+        let out = scrub_pii("server 192.168.0.1 and 10.0.0.255");
+        assert!(out.contains("<IP>"));
+        assert!(!out.contains("192.168.0.1"));
+        assert!(!out.contains("10.0.0.255"));
+    }
+
+    #[test]
+    fn scrub_pii_redacts_windows_paths() {
+        let out = scrub_pii("file at C:\\Users\\Me\\secret.txt");
+        assert!(out.contains("<PATH>"));
+        assert!(!out.contains("C:\\Users"));
+    }
+
+    #[test]
+    fn scrub_pii_redacts_unix_paths() {
+        let out = scrub_pii("config /etc/passwd and /home/user/data");
+        assert!(out.contains("<PATH>"));
+        assert!(!out.contains("/etc/passwd"));
+        assert!(!out.contains("/home/user"));
+    }
+
+    #[test]
+    fn scrub_pii_redacts_long_serial_numbers() {
+        let out = scrub_pii("serial ABC123456789 and XYZ999888777");
+        assert!(out.contains("<SERIAL>"));
+        assert!(!out.contains("ABC123456789"));
+        assert!(!out.contains("XYZ999888777"));
+    }
+
+    #[test]
+    fn scrub_pii_does_not_redact_short_alphanumeric() {
+        // Tokens shorter than 12 chars should be left alone.
+        let out = scrub_pii("id ABC123");
+        assert_eq!(out, "id ABC123");
+    }
+
+    #[test]
+    fn scrub_pii_redacts_multiple_patterns_at_once() {
+        let input = "ip 192.168.1.1 mac AA:BB:CC:DD:EE:FF serial DEADBEEF1234";
+        let out = scrub_pii(input);
+        assert!(out.contains("<IP>"));
+        assert!(out.contains("<MAC>"));
+        assert!(out.contains("<SERIAL>"));
+    }
+
+    // -----------------------------------------------------------------------
+    // redact_dsn helper
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn redact_dsn_passes_through_test_literal() {
+        assert_eq!(redact_dsn("test".to_string()), "test");
+    }
+
+    #[test]
+    fn redact_dsn_passes_through_test_scheme() {
+        assert_eq!(redact_dsn("test://foo".to_string()), "test://foo");
+    }
+
+    #[test]
+    fn redact_dsn_redacts_valid_sentry_dsn() {
+        let dsn = "https://public@o447951.ingest.sentry.io/5439417";
+        let redacted = redact_dsn(dsn.to_string());
+        assert!(!redacted.contains("public"));
+        assert!(redacted.contains("https"));
+        assert!(redacted.contains("o447951.ingest.sentry.io"));
+        assert!(redacted.contains("5439417"));
+    }
+
+    #[test]
+    fn redact_dsn_returns_invalid_for_garbage() {
+        assert_eq!(redact_dsn("garbage".to_string()), "invalid");
+    }
+
+    // -----------------------------------------------------------------------
+    // before_send event payload building (no network)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn before_send_returns_none_when_disabled() {
+        let _guard = CRASH_TEST_MUTEX.lock().unwrap();
+        CRASH_ENABLED.store(false, Ordering::SeqCst);
+        let event = Event::default();
+        let result = before_send(event);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn before_send_strips_pii_metadata_fields_when_enabled() {
+        let _guard = CRASH_TEST_MUTEX.lock().unwrap();
+        CRASH_ENABLED.store(true, Ordering::SeqCst);
+        let mut event = Event::default();
+        event.server_name = Some(Cow::Owned("my-server".to_string()));
+        event.environment = Some(Cow::Owned("production".to_string()));
+        event.release = Some(Cow::Owned("1.0.0".to_string()));
+        event.dist = Some(Cow::Owned("dist1".to_string()));
+        event.user = Some(User::default());
+        event.request = Some(Request::default());
+        event.contexts.insert("os".to_string(), Context::Os(Box::new(OsContext::default())));
+        event.tags.insert("host".to_string(), "my-host".to_string());
+        event
+            .extra
+            .insert("note".to_string(), Value::String("secret".to_string()));
+
+        let result = before_send(event).expect("event should be returned when enabled");
+        assert!(result.server_name.is_none());
+        assert!(result.environment.is_none());
+        assert!(result.release.is_none());
+        assert!(result.dist.is_none());
+        assert!(result.user.is_none());
+        assert!(result.request.is_none());
+        assert!(result.contexts.is_empty());
+        assert!(result.tags.is_empty());
+        assert!(result.extra.is_empty());
+    }
+
+    #[test]
+    fn before_send_scrubs_message_pii() {
+        let _guard = CRASH_TEST_MUTEX.lock().unwrap();
+        CRASH_ENABLED.store(true, Ordering::SeqCst);
+        let mut event = Event::default();
+        event.message = Some("error at 192.168.0.1 for C:\\Users\\me\\file.txt".to_string());
+        let result = before_send(event).expect("event returned");
+        let msg = result.message.expect("message present");
+        assert!(msg.contains("<IP>"));
+        assert!(msg.contains("<PATH>"));
+        assert!(!msg.contains("192.168.0.1"));
+        assert!(!msg.contains("C:\\Users"));
+    }
+
+    #[test]
+    fn before_send_scrubs_exception_value_and_stacktrace() {
+        let _guard = CRASH_TEST_MUTEX.lock().unwrap();
+        CRASH_ENABLED.store(true, Ordering::SeqCst);
+        let mut event = Event::default();
+        let mut ex = Exception::default();
+        ex.value = Some("panic involving 10.0.0.5".to_string());
+        let mut frame = Frame::default();
+        frame.abs_path = Some("C:\\Users\\bob\\src\\main.rs".to_string());
+        frame.filename = Some("main.rs".to_string());
+        let st = Stacktrace {
+            frames: vec![frame],
+            ..Default::default()
+        };
+        ex.stacktrace = Some(st);
+        event.exception = Values::from(vec![ex]);
+
+        let result = before_send(event).expect("event returned");
+        let ex_out = &result.exception.values[0];
+        let val = ex_out.value.as_ref().expect("exception value present");
+        assert!(val.contains("<IP>"));
+        assert!(!val.contains("10.0.0.5"));
+        let st_out = ex_out.stacktrace.as_ref().expect("stacktrace present");
+        let frame_out = &st_out.frames[0];
+        let abs = frame_out.abs_path.as_ref().expect("abs_path present");
+        assert!(abs.contains("<PATH>"));
+        assert!(!abs.contains("C:\\Users\\bob"));
+    }
+
+    #[test]
+    fn before_send_scrubs_raw_stacktrace() {
+        let _guard = CRASH_TEST_MUTEX.lock().unwrap();
+        CRASH_ENABLED.store(true, Ordering::SeqCst);
+        let mut event = Event::default();
+        let mut ex = Exception::default();
+        let mut frame = Frame::default();
+        frame.abs_path = Some("/home/alice/app/index.js".to_string());
+        ex.raw_stacktrace = Some(Stacktrace {
+            frames: vec![frame],
+            ..Default::default()
+        });
+        event.exception = Values::from(vec![ex]);
+
+        let result = before_send(event).expect("event returned");
+        let ex_out = &result.exception.values[0];
+        let st_out = ex_out.raw_stacktrace.as_ref().expect("raw stacktrace present");
+        let abs = st_out.frames[0].abs_path.as_ref().expect("abs_path present");
+        assert!(abs.contains("<PATH>"));
+        assert!(!abs.contains("/home/alice"));
+    }
+
+    // -----------------------------------------------------------------------
+    // scrub_stacktrace helper
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scrub_stacktrace_redacts_all_frames() {
+        let mut st = Stacktrace {
+            frames: vec![
+                Frame {
+                    abs_path: Some("C:\\Users\\a\\f1.rs".to_string()),
+                    filename: Some("f1.rs".to_string()),
+                    ..Default::default()
+                },
+                Frame {
+                    abs_path: Some("/home/b/f2.js".to_string()),
+                    filename: Some("f2.js".to_string()),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        scrub_stacktrace(&mut st);
+        for frame in &st.frames {
+            let abs = frame.abs_path.as_ref().expect("abs_path present");
+            assert!(abs.contains("<PATH>"));
+            assert!(!abs.contains("Users"));
+            assert!(!abs.contains("home"));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // crash_dir
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn crash_dir_ends_with_oxide_link_crashes() {
+        let dir = crash_dir();
+        let components: Vec<_> = dir.components().map(|c| c.as_os_str().to_string_lossy().to_string()).collect();
+        assert!(components.iter().any(|c| c == "OxideLink"));
+        assert!(components.iter().any(|c| c == "crashes"));
+    }
+
+    // -----------------------------------------------------------------------
+    // set_crash_reporting_enabled state transitions
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn set_crash_reporting_disabled_clears_state() {
+        let st = set_crash_reporting_enabled(false, None);
+        assert!(!st.enabled);
+        assert!(!st.test_mode);
+        assert_eq!(st.dsn, None);
+    }
+
+    #[test]
+    fn set_crash_reporting_enabled_with_test_dsn() {
+        let st = set_crash_reporting_enabled(true, Some("test".to_string()));
+        assert!(st.enabled);
+        assert!(st.test_mode);
     }
 }
 

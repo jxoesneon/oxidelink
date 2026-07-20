@@ -522,6 +522,19 @@ pub fn emit_overlay_state(
 mod tests {
     use super::*;
     use crate::state::ControllerState;
+    use std::sync::{Mutex as StdMutex, OnceLock};
+
+    /// Serializes tests that touch the real overlay config file on disk so they
+    /// do not race with each other when cargo runs tests in parallel.
+    static FILE_TEST_LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+
+    fn file_lock() -> &'static StdMutex<()> {
+        FILE_TEST_LOCK.get_or_init(|| StdMutex::new(()))
+    }
+
+    // -----------------------------------------------------------------------
+    // OverlayConfig defaults & field coverage
+    // -----------------------------------------------------------------------
 
     #[test]
     fn default_overlay_config() {
@@ -535,6 +548,42 @@ mod tests {
         assert!((cfg.opacity - 0.9).abs() < f32::EPSILON);
         assert!((cfg.scale - 1.0).abs() < f32::EPSILON);
     }
+
+    #[test]
+    fn default_overlay_config_all_fields_explicit() {
+        let cfg = OverlayConfig::default();
+        // Verify every field individually for full field coverage.
+        assert_eq!(cfg.enabled, false);
+        assert_eq!(cfg.toggle_hotkey, "Shift+F11");
+        assert_eq!(cfg.opacity, 0.9);
+        assert_eq!(cfg.position, "top-left");
+        assert_eq!(cfg.show_battery, true);
+        assert_eq!(cfg.show_profile, true);
+        assert_eq!(cfg.show_fps, false);
+        assert_eq!(cfg.scale, 1.0);
+    }
+
+    #[test]
+    fn overlay_config_is_clone_and_eq() {
+        let a = OverlayConfig::default();
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn overlay_config_debug_repr_contains_fields() {
+        let cfg = OverlayConfig::default();
+        let dbg = format!("{:?}", cfg);
+        assert!(dbg.contains("OverlayConfig"));
+        assert!(dbg.contains("enabled"));
+        assert!(dbg.contains("toggle_hotkey"));
+        assert!(dbg.contains("opacity"));
+        assert!(dbg.contains("position"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Serialization round-trip
+    // -----------------------------------------------------------------------
 
     #[test]
     fn config_serialization_roundtrip() {
@@ -554,16 +603,60 @@ mod tests {
     }
 
     #[test]
-    fn config_payload_serialization_uses_controller_state() {
-        let state = ControllerState::default();
-        let payload = OverlayStatePayload {
-            state: state.clone(),
-            profile_name: Some("Default".into()),
-        };
-        let json = serde_json::to_string(&payload).unwrap();
-        assert!(json.contains("profile_name"));
-        assert!(json.contains("Default"));
+    fn config_serialization_roundtrip_all_positions() {
+        for pos in [
+            "top-left",
+            "top-right",
+            "bottom-left",
+            "bottom-right",
+            "center",
+        ] {
+            let cfg = OverlayConfig {
+                position: pos.into(),
+                ..OverlayConfig::default()
+            };
+            let json = serde_json::to_string(&cfg).unwrap();
+            let parsed: OverlayConfig = serde_json::from_str(&json).unwrap();
+            assert_eq!(cfg, parsed, "roundtrip failed for position {}", pos);
+        }
     }
+
+    #[test]
+    fn config_deserialize_with_serde_default_fills_missing_fields() {
+        // An empty JSON object should produce the default config thanks to
+        // `#[serde(default)]`.
+        let parsed: OverlayConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(parsed, OverlayConfig::default());
+    }
+
+    #[test]
+    fn config_deserialize_partial_json_uses_defaults_for_missing() {
+        let json = r#"{"enabled": true, "opacity": 0.3}"#;
+        let parsed: OverlayConfig = serde_json::from_str(json).unwrap();
+        assert!(parsed.enabled);
+        assert!((parsed.opacity - 0.3).abs() < f32::EPSILON);
+        // Remaining fields come from Default.
+        assert_eq!(parsed.toggle_hotkey, "Shift+F11");
+        assert_eq!(parsed.position, "top-left");
+        assert!(parsed.show_battery);
+        assert!(parsed.show_profile);
+        assert!(!parsed.show_fps);
+        assert!((parsed.scale - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn config_pretty_serialization_is_valid_json() {
+        let cfg = OverlayConfig::default();
+        let json = serde_json::to_string_pretty(&cfg).unwrap();
+        assert!(json.contains("\"enabled\""));
+        assert!(json.contains("\"toggle_hotkey\""));
+        let parsed: OverlayConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(cfg, parsed);
+    }
+
+    // -----------------------------------------------------------------------
+    // Validation
+    // -----------------------------------------------------------------------
 
     #[test]
     fn config_validation_catches_invalid_values() {
@@ -594,6 +687,147 @@ mod tests {
     }
 
     #[test]
+    fn config_validation_accepts_default() {
+        assert!(OverlayConfig::default().validate().is_ok());
+    }
+
+    #[test]
+    fn config_validation_accepts_all_valid_positions() {
+        for pos in [
+            "top-left",
+            "top-right",
+            "bottom-left",
+            "bottom-right",
+            "center",
+        ] {
+            let cfg = OverlayConfig {
+                position: pos.into(),
+                ..OverlayConfig::default()
+            };
+            assert!(
+                cfg.validate().is_ok(),
+                "position '{}' should be valid",
+                pos
+            );
+        }
+    }
+
+    #[test]
+    fn config_validation_opacity_boundaries() {
+        // 0.0 and 1.0 are inclusive boundaries.
+        assert!(OverlayConfig {
+            opacity: 0.0,
+            ..OverlayConfig::default()
+        }
+        .validate()
+        .is_ok());
+        assert!(OverlayConfig {
+            opacity: 1.0,
+            ..OverlayConfig::default()
+        }
+        .validate()
+        .is_ok());
+        // Just outside the range.
+        assert!(OverlayConfig {
+            opacity: -0.01,
+            ..OverlayConfig::default()
+        }
+        .validate()
+        .is_err());
+        assert!(OverlayConfig {
+            opacity: 1.01,
+            ..OverlayConfig::default()
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn config_validation_scale_boundaries() {
+        // scale must be > 0.0 and <= 4.0
+        assert!(OverlayConfig {
+            scale: 0.001,
+            ..OverlayConfig::default()
+        }
+        .validate()
+        .is_ok());
+        assert!(OverlayConfig {
+            scale: 4.0,
+            ..OverlayConfig::default()
+        }
+        .validate()
+        .is_ok());
+        assert!(OverlayConfig {
+            scale: 0.0,
+            ..OverlayConfig::default()
+        }
+        .validate()
+        .is_err());
+        assert!(OverlayConfig {
+            scale: -1.0,
+            ..OverlayConfig::default()
+        }
+        .validate()
+        .is_err());
+        assert!(OverlayConfig {
+            scale: 4.01,
+            ..OverlayConfig::default()
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn config_validation_invalid_hotkey_errors() {
+        assert!(OverlayConfig {
+            toggle_hotkey: "BogusMod+K".into(),
+            ..OverlayConfig::default()
+        }
+        .validate()
+        .is_err());
+        assert!(OverlayConfig {
+            toggle_hotkey: "   ".into(),
+            ..OverlayConfig::default()
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn config_validation_error_messages_are_descriptive() {
+        let err = OverlayConfig {
+            opacity: 2.5,
+            ..OverlayConfig::default()
+        }
+        .validate()
+        .unwrap_err();
+        assert!(err.contains("opacity"));
+        assert!(err.contains("2.5"));
+
+        let err = OverlayConfig {
+            position: "middle".into(),
+            ..OverlayConfig::default()
+        }
+        .validate()
+        .unwrap_err();
+        assert!(err.contains("position"));
+        assert!(err.contains("middle"));
+
+        let err = OverlayConfig {
+            scale: 5.0,
+            ..OverlayConfig::default()
+        }
+        .validate()
+        .unwrap_err();
+        assert!(err.contains("scale"));
+        assert!(err.contains("5"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Sanitize
+    // -----------------------------------------------------------------------
+
+    #[test]
     fn config_sanitize_fixes_invalid_values() {
         let mut cfg = OverlayConfig {
             opacity: 2.0,
@@ -608,6 +842,102 @@ mod tests {
         assert_eq!(cfg.position, "top-left");
         assert_eq!(cfg.toggle_hotkey, "Shift+F11");
     }
+
+    #[test]
+    fn config_sanitize_clamps_opacity_low() {
+        let mut cfg = OverlayConfig {
+            opacity: -5.0,
+            ..OverlayConfig::default()
+        };
+        cfg.sanitize();
+        assert_eq!(cfg.opacity, 0.0);
+    }
+
+    #[test]
+    fn config_sanitize_clamps_scale_low() {
+        let mut cfg = OverlayConfig {
+            scale: 0.0,
+            ..OverlayConfig::default()
+        };
+        cfg.sanitize();
+        assert_eq!(cfg.scale, 0.25);
+    }
+
+    #[test]
+    fn config_sanitize_clamps_scale_high() {
+        let mut cfg = OverlayConfig {
+            scale: 100.0,
+            ..OverlayConfig::default()
+        };
+        cfg.sanitize();
+        assert_eq!(cfg.scale, 4.0);
+    }
+
+    #[test]
+    fn config_sanitize_keeps_valid_position() {
+        for pos in ["top-right", "bottom-left", "bottom-right", "center"] {
+            let mut cfg = OverlayConfig {
+                position: pos.into(),
+                ..OverlayConfig::default()
+            };
+            cfg.sanitize();
+            assert_eq!(cfg.position, pos);
+        }
+    }
+
+    #[test]
+    fn config_sanitize_normalizes_hotkey_whitespace() {
+        let mut cfg = OverlayConfig {
+            toggle_hotkey: "  Ctrl +  Shift + F9 ".into(),
+            ..OverlayConfig::default()
+        };
+        cfg.sanitize();
+        assert_eq!(cfg.toggle_hotkey, "Ctrl+Shift+F9");
+    }
+
+    #[test]
+    fn config_sanitize_keeps_valid_hotkey() {
+        let mut cfg = OverlayConfig {
+            toggle_hotkey: "Alt+F4".into(),
+            ..OverlayConfig::default()
+        };
+        cfg.sanitize();
+        assert_eq!(cfg.toggle_hotkey, "Alt+F4");
+    }
+
+    #[test]
+    fn config_sanitize_result_is_valid() {
+        let mut cfg = OverlayConfig {
+            opacity: 99.0,
+            scale: -1.0,
+            position: "nowhere".into(),
+            toggle_hotkey: "garbage++".into(),
+            ..OverlayConfig::default()
+        };
+        cfg.sanitize();
+        assert!(cfg.validate().is_ok(), "sanitized config should validate");
+    }
+
+    #[test]
+    fn config_sanitize_does_not_touch_valid_config() {
+        let mut cfg = OverlayConfig {
+            enabled: true,
+            toggle_hotkey: "Ctrl+Alt+T".into(),
+            opacity: 0.5,
+            position: "center".into(),
+            show_battery: true,
+            show_profile: false,
+            show_fps: true,
+            scale: 2.0,
+        };
+        let before = cfg.clone();
+        cfg.sanitize();
+        assert_eq!(cfg, before);
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_hotkey — valid formats, invalid formats, edge cases
+    // -----------------------------------------------------------------------
 
     #[test]
     fn hotkey_parsing() {
@@ -625,6 +955,129 @@ mod tests {
     }
 
     #[test]
+    fn hotkey_normalization_and_validation() {
+        let (mods, key) = parse_hotkey("  ctrl + shift + f10 ").unwrap();
+        assert_eq!(mods, vec!["Control", "Shift"]);
+        assert_eq!(key, "F10");
+
+        assert!(parse_hotkey("Ctrl+").is_err());
+        assert!(parse_hotkey("Shift++F").is_err());
+    }
+
+    #[test]
+    fn hotkey_single_key_no_modifiers() {
+        let (mods, key) = parse_hotkey("F12").unwrap();
+        assert!(mods.is_empty());
+        assert_eq!(key, "F12");
+    }
+
+    #[test]
+    fn hotkey_single_letter_key() {
+        let (mods, key) = parse_hotkey("K").unwrap();
+        assert!(mods.is_empty());
+        assert_eq!(key, "K");
+    }
+
+    #[test]
+    fn hotkey_lowercase_key_is_uppercased() {
+        let (mods, key) = parse_hotkey("ctrl+t").unwrap();
+        assert_eq!(mods, vec!["Control"]);
+        assert_eq!(key, "T");
+    }
+
+    #[test]
+    fn hotkey_ctrl_alias() {
+        let (mods, _) = parse_hotkey("Ctrl+K").unwrap();
+        assert_eq!(mods, vec!["Control"]);
+
+        let (mods, _) = parse_hotkey("Control+K").unwrap();
+        assert_eq!(mods, vec!["Control"]);
+    }
+
+    #[test]
+    fn hotkey_alt_aliases() {
+        for alias in ["Alt", "Option", "Menu"] {
+            let (mods, _) = parse_hotkey(&format!("{}+K", alias)).unwrap();
+            assert_eq!(mods, vec!["Alt"], "alias {} should map to Alt", alias);
+        }
+    }
+
+    #[test]
+    fn hotkey_super_aliases() {
+        for alias in ["Super", "Command", "Cmd", "Win", "Meta"] {
+            let (mods, _) = parse_hotkey(&format!("{}+K", alias)).unwrap();
+            assert_eq!(mods, vec!["Super"], "alias {} should map to Super", alias);
+        }
+    }
+
+    #[test]
+    fn hotkey_all_modifiers_combined() {
+        let (mods, key) = parse_hotkey("Ctrl+Alt+Shift+Super+F5").unwrap();
+        assert_eq!(mods, vec!["Control", "Alt", "Shift", "Super"]);
+        assert_eq!(key, "F5");
+    }
+
+    #[test]
+    fn hotkey_whitespace_only_is_error() {
+        assert!(parse_hotkey("   ").is_err());
+    }
+
+    #[test]
+    fn hotkey_leading_plus_is_error() {
+        assert!(parse_hotkey("+K").is_err());
+    }
+
+    #[test]
+    fn hotkey_trailing_plus_is_error() {
+        assert!(parse_hotkey("Ctrl+K+").is_err());
+    }
+
+    #[test]
+    fn hotkey_empty_string_is_error() {
+        assert!(parse_hotkey("").is_err());
+    }
+
+    #[test]
+    fn hotkey_only_plus_is_error() {
+        assert!(parse_hotkey("+").is_err());
+    }
+
+    #[test]
+    fn hotkey_multiple_plus_is_error() {
+        assert!(parse_hotkey("Shift++F").is_err());
+        assert!(parse_hotkey("+++").is_err());
+    }
+
+    #[test]
+    fn hotkey_unknown_modifier_is_error_with_name() {
+        let err = parse_hotkey("Bogus+K").unwrap_err();
+        assert!(err.contains("unknown modifier"));
+        assert!(err.contains("bogus"));
+    }
+
+    #[test]
+    fn hotkey_case_insensitive_modifiers() {
+        let (mods, _) = parse_hotkey("SHIFT+k").unwrap();
+        assert_eq!(mods, vec!["Shift"]);
+
+        let (mods, _) = parse_hotkey("sHiFt+k").unwrap();
+        assert_eq!(mods, vec!["Shift"]);
+    }
+
+    #[test]
+    fn hotkey_error_messages_are_descriptive() {
+        let err = parse_hotkey("").unwrap_err();
+        assert_eq!(err, "hotkey is empty");
+
+        let err = parse_hotkey("Shift+").unwrap_err();
+        assert_eq!(err, "hotkey contains an empty segment");
+    }
+
+    // -----------------------------------------------------------------------
+    // OverlayState
+    // -----------------------------------------------------------------------
+
+    #[test]
     fn overlay_state_defaults_to_disabled_and_not_visible() {
         let st = OverlayState::default();
         assert!(!st.visible);
@@ -634,12 +1087,228 @@ mod tests {
     }
 
     #[test]
-    fn hotkey_normalization_and_validation() {
-        let (mods, key) = parse_hotkey("  ctrl + shift + f10 ").unwrap();
-        assert_eq!(mods, vec!["Control", "Shift"]);
-        assert_eq!(key, "F10");
+    fn overlay_state_all_fields() {
+        let cfg = OverlayConfig {
+            enabled: true,
+            toggle_hotkey: "Ctrl+T".into(),
+            opacity: 0.3,
+            position: "center".into(),
+            show_battery: false,
+            show_profile: false,
+            show_fps: true,
+            scale: 2.0,
+        };
+        let st = OverlayState {
+            config: cfg.clone(),
+            visible: true,
+        };
+        assert!(st.visible);
+        assert_eq!(st.config, cfg);
+    }
 
-        assert!(parse_hotkey("Ctrl+").is_err());
-        assert!(parse_hotkey("Shift++F").is_err());
+    #[test]
+    fn overlay_state_is_clone_and_debug() {
+        let st = OverlayState::default();
+        let cloned = st.clone();
+        assert_eq!(cloned.visible, st.visible);
+        assert_eq!(cloned.config, st.config);
+
+        let dbg = format!("{:?}", st);
+        assert!(dbg.contains("OverlayState"));
+        assert!(dbg.contains("visible"));
+    }
+
+    #[test]
+    fn overlay_state_visible_toggle_simulation() {
+        // Simulate the state transitions that OverlayWindow::toggle would drive
+        // without requiring a real AppHandle.
+        let mut st = OverlayState::default();
+        assert!(!st.visible);
+
+        // show -> visible true
+        st.visible = true;
+        assert!(st.visible);
+
+        // toggle -> hide
+        st.visible = !st.visible;
+        assert!(!st.visible);
+
+        // toggle -> show
+        st.visible = !st.visible;
+        assert!(st.visible);
+    }
+
+    // -----------------------------------------------------------------------
+    // OverlayStatePayload (emit_overlay_state event payload structure)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn config_payload_serialization_uses_controller_state() {
+        let state = ControllerState::default();
+        let payload = OverlayStatePayload {
+            state: state.clone(),
+            profile_name: Some("Default".into()),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("profile_name"));
+        assert!(json.contains("Default"));
+    }
+
+    #[test]
+    fn payload_with_none_profile_name_serializes_null() {
+        let state = ControllerState::default();
+        let payload = OverlayStatePayload {
+            state,
+            profile_name: None,
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("\"profile_name\":null"));
+    }
+
+    #[test]
+    fn payload_with_some_profile_name_serializes_string() {
+        let state = ControllerState::default();
+        let payload = OverlayStatePayload {
+            state,
+            profile_name: Some("MyProfile".into()),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("\"profile_name\":\"MyProfile\""));
+    }
+
+    #[test]
+    fn payload_contains_controller_state_fields() {
+        let state = ControllerState::default();
+        let payload = OverlayStatePayload {
+            state: state.clone(),
+            profile_name: None,
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        // ControllerState has a `connected` field.
+        assert!(json.contains("\"connected\""));
+        assert!(json.contains("\"battery_percent\""));
+    }
+
+    #[test]
+    fn payload_is_clone() {
+        let state = ControllerState::default();
+        let payload = OverlayStatePayload {
+            state,
+            profile_name: Some("X".into()),
+        };
+        let _cloned = payload.clone();
+    }
+
+    // -----------------------------------------------------------------------
+    // Save / load config (round-trip through the real config path)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn save_then_load_overlay_config_roundtrip() {
+        let _guard = file_lock().lock().unwrap();
+        let original = OverlayConfig {
+            enabled: true,
+            toggle_hotkey: "Ctrl+Alt+F7".into(),
+            opacity: 0.42,
+            position: "bottom-right".into(),
+            show_battery: false,
+            show_profile: false,
+            show_fps: true,
+            scale: 1.75,
+        };
+
+        let saved_path = save_overlay_config(&original).expect("save should succeed");
+        assert!(saved_path.exists(), "config file should exist after save");
+
+        let loaded = load_overlay_config();
+        // load_overlay_config sanitizes, so compare against a sanitized copy.
+        let mut expected = original.clone();
+        expected.sanitize();
+        assert_eq!(loaded, expected);
+
+        // Restore a default config so the test does not leave stray state.
+        let _ = save_overlay_config(&OverlayConfig::default());
+    }
+
+    #[test]
+    fn save_overlay_config_creates_parent_dirs() {
+        let _guard = file_lock().lock().unwrap();
+        // The config path includes %APPDATA%\OxideLink\ which save creates if
+        // missing.  Saving the default config should always succeed.
+        let path = save_overlay_config(&OverlayConfig::default()).expect("save should succeed");
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn overlay_config_path_ends_with_overlay_json() {
+        let path = overlay_config_path();
+        assert!(path.ends_with("overlay.json"));
+        assert!(path.to_string_lossy().contains("OxideLink"));
+    }
+
+    #[test]
+    fn load_overlay_config_returns_default_when_file_missing() {
+        let _guard = file_lock().lock().unwrap();
+        // Remove the config file so load falls back to defaults.
+        let path = overlay_config_path();
+        let _ = std::fs::remove_file(&path);
+        let cfg = load_overlay_config();
+        assert_eq!(cfg, OverlayConfig::default());
+    }
+
+    #[test]
+    fn load_overlay_config_sanitizes_loaded_values() {
+        let _guard = file_lock().lock().unwrap();
+        // Write a config with out-of-range values; load should clamp them.
+        let bad_json = r#"{
+            "enabled": true,
+            "toggle_hotkey": "Shift+F11",
+            "opacity": 5.0,
+            "position": "center",
+            "show_battery": true,
+            "show_profile": true,
+            "show_fps": false,
+            "scale": 50.0
+        }"#;
+        let path = overlay_config_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(&path, bad_json).unwrap();
+
+        let cfg = load_overlay_config();
+        assert_eq!(cfg.opacity, 1.0);
+        assert_eq!(cfg.scale, 4.0);
+
+        // Restore default.
+        let _ = save_overlay_config(&OverlayConfig::default());
+    }
+
+    #[test]
+    fn load_overlay_config_falls_back_on_invalid_json() {
+        let _guard = file_lock().lock().unwrap();
+        let path = overlay_config_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(&path, "{ not valid json }").unwrap();
+
+        let cfg = load_overlay_config();
+        assert_eq!(cfg, OverlayConfig::default());
+
+        let _ = save_overlay_config(&OverlayConfig::default());
+    }
+
+    // -----------------------------------------------------------------------
+    // Constants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn overlay_constants_have_expected_values() {
+        assert_eq!(OVERLAY_WINDOW_LABEL, "overlay");
+        assert_eq!(OVERLAY_HTML, "overlay.html");
+        assert_eq!(BASE_WIDTH, 320.0);
+        assert_eq!(BASE_HEIGHT, 180.0);
+        assert_eq!(CORNER_PADDING, 12.0);
     }
 }

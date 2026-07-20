@@ -86,3 +86,32 @@ export class RollingAverage {
     return this._median();
   }
 }
+
+// pushBuffer — append a value to a fixed-size ring buffer, dropping from the front.
+export function pushBuffer(buffer, value, maxSize = 100) {
+  buffer.push(value);
+  while (buffer.length > maxSize) buffer.shift();
+  return buffer;
+}
+
+// buildLedMask — read 4 LED toggle checkboxes and build a 4-bit bitmask.
+// Accepts an optional `getElementById` function for testability (defaults to document.getElementById).
+export function buildLedMask(getById = (id) => document.getElementById(id)) {
+  let mask = 0;
+  for (let i = 1; i <= 4; i++) {
+    const tog = getById(`led-toggle-${i}`);
+    if (tog && tog.checked) mask |= 1 << (i - 1);
+  }
+  return mask;
+}
+
+// getCheckedLedIndices — return the 1-based indices of checked LED toggles.
+export function getCheckedLedIndices(getById = (id) => document.getElementById(id)) {
+  const indices = [];
+  for (let i = 1; i <= 4; i++) {
+    const tog = getById(`led-toggle-${i}`);
+    if (tog && tog.checked) indices.push(i);
+  }
+  return indices;
+}
+

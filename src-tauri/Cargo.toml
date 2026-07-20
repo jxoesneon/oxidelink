@@ -3,6 +3,7 @@ name = "oxidelink"
 version = "0.1.0"
 edition = "2021"
 description = "OxideLink — Native Windows driver and manager for the Nintendo Switch Pro Controller"
+license = "MIT"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

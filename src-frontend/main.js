@@ -1,7 +1,7 @@
 // OxideLink frontend — WebSocket client bound to the Rust IPC server on :9001.
 // Falls back to Tauri `invoke` for command-style calls when running inside Tauri.
 
-import { escapeHtml, formatLogTimestamp, logLevelClass, buildBindingAction, parseBindingAction, RollingAverage } from "./utils.js";
+import { escapeHtml, formatLogTimestamp, logLevelClass, buildBindingAction, parseBindingAction, RollingAverage, pushBuffer, buildLedMask, getCheckedLedIndices } from "./utils.js";
 
 // Must match `IPC_WS_ADDR` in `src-tauri/src/main.rs`.
 const WS_URL = "ws://127.0.0.1:9001";
@@ -781,10 +781,7 @@ function drawSparkline(canvasId, buffer, color) {
   ctx.stroke();
 }
 
-function pushBuffer(buffer, value) {
-  buffer.push(value);
-  while (buffer.length > IMU_BUFFER_SIZE) buffer.shift();
-}
+// pushBuffer imported from ./utils.js
 
 function updateImuDisplay(imuData) {
   // The backend sends IpcEvent::ImuData { frames: ImuData { frames: [ImuFrame; 3] }, timestamp }
@@ -907,23 +904,7 @@ let currentLedPreset = "solid";
 let ledPatternTimer = null;
 let ledPatternStep = 0;
 
-function buildLedMask() {
-  let mask = 0;
-  for (let i = 1; i <= 4; i++) {
-    const tog = el(`led-toggle-${i}`);
-    if (tog && tog.checked) mask |= 1 << (i - 1);
-  }
-  return mask;
-}
-
-function getCheckedLedIndices() {
-  const indices = [];
-  for (let i = 1; i <= 4; i++) {
-    const tog = el(`led-toggle-${i}`);
-    if (tog && tog.checked) indices.push(i);
-  }
-  return indices;
-}
+// buildLedMask and getCheckedLedIndices imported from ./utils.js
 
 function updateLedVisuals(activeMask) {
   const mask = activeMask !== undefined ? activeMask : buildLedMask();

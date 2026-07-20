@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import {
   escapeHtml,
   formatLogTimestamp,
@@ -6,6 +6,9 @@ import {
   buildBindingAction,
   parseBindingAction,
   RollingAverage,
+  pushBuffer,
+  buildLedMask,
+  getCheckedLedIndices,
 } from "./utils.js";
 
 describe("escapeHtml", () => {
@@ -161,5 +164,92 @@ describe("RollingAverage", () => {
     for (let i = 0; i < 5; i++) ra.push(50);
     ra.push(50);
     expect(ra.samples.length).toBe(6);
+  });
+});
+
+describe("pushBuffer", () => {
+  it("appends values to the buffer", () => {
+    const buf = [];
+    pushBuffer(buf, 1);
+    pushBuffer(buf, 2);
+    expect(buf).toEqual([1, 2]);
+  });
+
+  it("trims the buffer to maxSize", () => {
+    const buf = [];
+    for (let i = 0; i < 10; i++) pushBuffer(buf, i, 5);
+    expect(buf.length).toBe(5);
+    expect(buf).toEqual([5, 6, 7, 8, 9]);
+  });
+
+  it("defaults maxSize to 100", () => {
+    const buf = [];
+    for (let i = 0; i < 150; i++) pushBuffer(buf, i);
+    expect(buf.length).toBe(100);
+    expect(buf[0]).toBe(50);
+  });
+});
+
+describe("buildLedMask", () => {
+  let mockGet;
+  beforeEach(() => {
+    mockGet = (id) => {
+      const toggles = {
+        "led-toggle-1": { checked: true },
+        "led-toggle-2": { checked: false },
+        "led-toggle-3": { checked: true },
+        "led-toggle-4": { checked: false },
+      };
+      return toggles[id];
+    };
+  });
+
+  it("builds a bitmask from checked toggles", () => {
+    expect(buildLedMask(mockGet)).toBe(0b0101); // bits 0 and 2
+  });
+
+  it("returns 0 when no toggles are checked", () => {
+    const allUnchecked = () => ({ checked: false });
+    expect(buildLedMask(allUnchecked)).toBe(0);
+  });
+
+  it("returns 0b1111 when all toggles are checked", () => {
+    const allChecked = () => ({ checked: true });
+    expect(buildLedMask(allChecked)).toBe(0b1111);
+  });
+
+  it("handles missing elements gracefully", () => {
+    const noElements = () => null;
+    expect(buildLedMask(noElements)).toBe(0);
+  });
+});
+
+describe("getCheckedLedIndices", () => {
+  it("returns 1-based indices of checked toggles", () => {
+    const mockGet = (id) => {
+      const toggles = {
+        "led-toggle-1": { checked: true },
+        "led-toggle-2": { checked: false },
+        "led-toggle-3": { checked: true },
+        "led-toggle-4": { checked: true },
+      };
+      return toggles[id];
+    };
+    expect(getCheckedLedIndices(mockGet)).toEqual([1, 3, 4]);
+  });
+
+  it("returns empty array when none checked", () => {
+    const allUnchecked = () => ({ checked: false });
+    expect(getCheckedLedIndices(allUnchecked)).toEqual([]);
+  });
+
+  it("returns all four when all checked", () => {
+    const allChecked = () => ({ checked: true });
+    expect(getCheckedLedIndices(allChecked)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("handles missing elements gracefully", () => {
+    const noElements = () => null;
+    expect(getCheckedLedIndices(noElements)).toEqual([]);
   });
 });

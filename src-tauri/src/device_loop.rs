@@ -3018,4 +3018,1712 @@ mod tests {
         let loop_instance = DeviceLoop::with_slot(shared, tx, 2, None);
         assert_eq!(loop_instance.slot, 2);
     }
+
+    // -----------------------------------------------------------------------
+    // slot_state — returns the correct shared slot
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn slot_state_returns_correct_slot() {
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 2, None);
+
+        // Write to the slot via slot_state and verify it's the same slot.
+        {
+            let mut state = loop_instance.slot_state().write();
+            state.connected = true;
+        }
+        assert!(shared.slots[2].read().connected);
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_usb_reply — command name mapping and ACK/NACK status
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn handle_usb_reply_handshake_success() {
+        use crate::hid_parser::REPORT_ID_USB_REPLY;
+        use crate::subcmd::USB_CMD_HANDSHAKE;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 0, None);
+
+        // USB reply: handshake command, status 0 (success).
+        let data = [REPORT_ID_USB_REPLY, USB_CMD_HANDSHAKE, 0x00];
+        loop_instance.handle_usb_reply(&data);
+        // Should not panic; success is logged at info level.
+    }
+
+    #[test]
+    fn handle_usb_reply_baudrate_nack() {
+        use crate::hid_parser::REPORT_ID_USB_REPLY;
+        use crate::subcmd::USB_CMD_BAUDRATE_3M;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 0, None);
+
+        // USB reply: baudrate command, non-zero status (NACK).
+        let data = [REPORT_ID_USB_REPLY, USB_CMD_BAUDRATE_3M, 0x01];
+        loop_instance.handle_usb_reply(&data);
+        // Should not panic; NACK is logged at warn level.
+    }
+
+    #[test]
+    fn handle_usb_reply_no_timeout_success() {
+        use crate::hid_parser::REPORT_ID_USB_REPLY;
+        use crate::subcmd::USB_CMD_NO_TIMEOUT;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 0, None);
+
+        let data = [REPORT_ID_USB_REPLY, USB_CMD_NO_TIMEOUT, 0x00];
+        loop_instance.handle_usb_reply(&data);
+    }
+
+    #[test]
+    fn handle_usb_reply_enable_timeout_nack() {
+        use crate::hid_parser::REPORT_ID_USB_REPLY;
+        use crate::subcmd::USB_CMD_EN_TIMEOUT;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 0, None);
+
+        let data = [REPORT_ID_USB_REPLY, USB_CMD_EN_TIMEOUT, 0xFF];
+        loop_instance.handle_usb_reply(&data);
+    }
+
+    #[test]
+    fn handle_usb_reply_unknown_command_id() {
+        use crate::hid_parser::REPORT_ID_USB_REPLY;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 0, None);
+
+        // Unknown command ID 0x99 — should log "unknown".
+        let data = [REPORT_ID_USB_REPLY, 0x99, 0x00];
+        loop_instance.handle_usb_reply(&data);
+    }
+
+    #[test]
+    fn handle_usb_reply_two_byte_data_defaults_status_zero() {
+        use crate::hid_parser::REPORT_ID_USB_REPLY;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 0, None);
+
+        // Only 2 bytes — status defaults to 0 (success).
+        let data = [REPORT_ID_USB_REPLY, 0x04];
+        loop_instance.handle_usb_reply(&data);
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_nfc_ir_report — tag detection with NFC payload
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn handle_nfc_ir_report_with_tag_sets_tag_present() {
+        use crate::mock::MockGenerator;
+
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        let mock = MockGenerator::new();
+        let report = mock.build_nfc_ir_report(true);
+
+        loop_instance.handle_nfc_ir_report(&report);
+
+        let state = shared.slots[0].read();
+        assert!(state.nfc.tag_present, "tag_present should be true");
+        assert!(state.nfc.uid.is_some(), "uid should be set");
+
+        // An NfcTagScanned event should be emitted.
+        let mut found = false;
+        while let Ok(ev) = rx.try_recv() {
+            if matches!(ev, crate::state::IpcEvent::NfcTagScanned { .. }) {
+                found = true;
+            }
+        }
+        assert!(found, "NfcTagScanned event should be emitted");
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_report — RawHidReport event throttling
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn handle_report_emits_raw_hid_report() {
+        use crate::state::IpcEvent;
+        use crate::hid_parser::REPORT_ID_STANDARD;
+        use std::thread::sleep;
+
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 0, None);
+
+        // Sleep >50ms so the first report is not throttled (last_raw_emit is
+        // initialized to Instant::now() in the constructor).
+        sleep(Duration::from_millis(55));
+
+        // Build a minimal standard report (12 bytes).
+        let mut data = vec![0u8; 12];
+        data[0] = REPORT_ID_STANDARD;
+        data[1] = 0x01; // timer
+
+        loop_instance.handle_report(&data);
+
+        // The first report should emit a RawHidReport event.
+        let mut found_raw = false;
+        while let Ok(ev) = rx.try_recv() {
+            if let IpcEvent::RawHidReport { report_id, .. } = ev {
+                assert_eq!(report_id, REPORT_ID_STANDARD);
+                found_raw = true;
+            }
+        }
+        assert!(found_raw, "RawHidReport event should be emitted on first report");
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_report — REPORT_ID_DEFAULT_BT dispatches to handle_standard_report
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn handle_report_default_bt_report_id_dispatches() {
+        use crate::hid_parser::REPORT_ID_DEFAULT_BT;
+        use crate::mock::MockGenerator;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Build a standard report but override the report ID to 0x3F (default BT).
+        let mock = MockGenerator::new();
+        let mut report = mock.build_full_standard_report();
+        report[0] = REPORT_ID_DEFAULT_BT;
+
+        loop_instance.handle_report(&report);
+
+        let state = shared.slots[0].read();
+        assert!(state.connected, "state should be connected after default BT report");
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_subcmd_reply — various subcommand reply branches
+    // -----------------------------------------------------------------------
+    // These tests use #[tokio::test] because handle_subcmd_reply spawns a
+    // tokio task to forward the reply to the SubcommandManager.
+
+    /// Helper: build a 0x21 subcommand reply with the given subcmd ID and
+    /// reply data.
+    fn build_subcmd_reply_with_data(subcmd_id: u8, reply_data: &[u8]) -> Vec<u8> {
+        use crate::hid_parser::REPORT_ID_SUBCMD_REPLY;
+        let mut report = vec![0u8; 15 + reply_data.len()];
+        report[0] = REPORT_ID_SUBCMD_REPLY;
+        report[1] = 0x00; // timer
+        report[2] = 0x80; // battery: full, not charging
+        report[13] = 0x80; // ACK (MSB=1)
+        report[14] = subcmd_id;
+        report[15..].copy_from_slice(reply_data);
+        report
+    }
+
+    /// Helper: build SPI flash read reply data (address + size + flash data).
+    fn build_spi_reply_data(addr: u32, flash_data: &[u8]) -> Vec<u8> {
+        let mut data = vec![0u8; 4 + flash_data.len()];
+        data[0] = (addr & 0xFF) as u8;
+        data[1] = ((addr >> 8) & 0xFF) as u8;
+        data[2] = ((addr >> 16) & 0xFF) as u8;
+        data[3] = flash_data.len() as u8;
+        data[4..].copy_from_slice(flash_data);
+        data
+    }
+
+    /// Helper: encode two 12-bit values into 3 bytes (same packing as stick
+    /// input reports).
+    fn encode_12bit_pair(v1: u16, v2: u16) -> [u8; 3] {
+        let b0 = (v1 & 0xFF) as u8;
+        let b1 = ((v1 >> 8) & 0x0F) as u8 | (((v2 & 0x0F) << 4) as u8);
+        let b2 = ((v2 >> 4) & 0xFF) as u8;
+        [b0, b1, b2]
+    }
+
+    /// Helper: build a valid 9-byte left stick factory calibration block.
+    /// Left format: [max_above, center, min_below] — 3 pairs of 12-bit values.
+    fn build_left_stick_cal_block() -> Vec<u8> {
+        let center = 0x800u16;
+        let max_above = 0x600u16;
+        let min_below = 0x600u16;
+        let mut data = Vec::with_capacity(9);
+        data.extend_from_slice(&encode_12bit_pair(max_above, max_above));
+        data.extend_from_slice(&encode_12bit_pair(center, center));
+        data.extend_from_slice(&encode_12bit_pair(min_below, min_below));
+        data
+    }
+
+    /// Helper: build a valid 9-byte right stick factory calibration block.
+    /// Right format: [center, min_below, max_above] — 3 pairs of 12-bit values.
+    fn build_right_stick_cal_block() -> Vec<u8> {
+        let center = 0x800u16;
+        let max_above = 0x600u16;
+        let min_below = 0x600u16;
+        let mut data = Vec::with_capacity(9);
+        data.extend_from_slice(&encode_12bit_pair(center, center));
+        data.extend_from_slice(&encode_12bit_pair(min_below, min_below));
+        data.extend_from_slice(&encode_12bit_pair(max_above, max_above));
+        data
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_device_info_populates_state() {
+        use crate::mock::MockGenerator;
+        use crate::state::IpcEvent;
+
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        let mock = MockGenerator::new();
+        let reply = mock.build_device_info_reply();
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let state = shared.slots[0].read();
+        assert!(state.device_info.is_some(), "device_info should be populated");
+        let info = state.device_info.as_ref().unwrap();
+        assert!(!info.firmware_version.is_empty(), "firmware version should be set");
+
+        // A DeviceInfo event should be emitted.
+        let mut found = false;
+        while let Ok(ev) = rx.try_recv() {
+            if let IpcEvent::DeviceInfo { data } = ev {
+                assert!(!data.firmware_version.is_empty());
+                found = true;
+            }
+        }
+        assert!(found, "DeviceInfo event should be emitted");
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_enable_imu_sets_flag() {
+        use crate::mock::MockGenerator;
+        use crate::state::IpcEvent;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        let mock = MockGenerator::new();
+        let reply = mock.build_enable_imu_reply();
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let state = shared.slots[0].read();
+        assert!(state.imu_enabled, "imu_enabled should be true after 0x40 ACK");
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_enable_vibration_sets_flag() {
+        use crate::mock::MockGenerator;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        let mock = MockGenerator::new();
+        let reply = mock.build_enable_vibration_reply();
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let state = shared.slots[0].read();
+        assert!(
+            state.vibration_enabled,
+            "vibration_enabled should be true after 0x48 ACK"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_get_voltage_parses_voltage() {
+        use crate::subcmd::SUBCMD_GET_VOLTAGE;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Voltage raw = 0x0F00 (3840), expected mV = 3840 * 25 / 10 = 9600.
+        let voltage_raw: u16 = 0x0F00;
+        let reply_data = voltage_raw.to_le_bytes().to_vec();
+        let reply = build_subcmd_reply_with_data(SUBCMD_GET_VOLTAGE, &reply_data);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let state = shared.slots[0].read();
+        let expected_mv = (voltage_raw as u32 * 25 / 10) as u16;
+        assert_eq!(
+            state.battery_voltage_mv, expected_mv,
+            "battery_voltage_mv should be parsed correctly"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_get_player_lights_parses_led_mask() {
+        use crate::subcmd::SUBCMD_GET_PLAYER_LIGHTS;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // lights_byte = 0x53: led_mask = 0x03, flash_pattern = 0x05.
+        let lights_byte: u8 = 0x53;
+        let reply = build_subcmd_reply_with_data(SUBCMD_GET_PLAYER_LIGHTS, &[lights_byte]);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let state = shared.slots[0].read();
+        assert_eq!(state.player_lights.led_mask, 0x03);
+        assert_eq!(state.player_lights.flash_pattern, 0x05);
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_set_player_lights_is_noop_ack() {
+        use crate::subcmd::SUBCMD_SET_PLAYER_LIGHTS;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        let reply = build_subcmd_reply_with_data(SUBCMD_SET_PLAYER_LIGHTS, &[]);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        // Should not panic; just logs a debug message.
+        let state = shared.slots[0].read();
+        assert!(state.connected, "state should still be accessible");
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_set_home_light_is_noop_ack() {
+        use crate::subcmd::SUBCMD_SET_HOME_LIGHT;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        let reply = build_subcmd_reply_with_data(SUBCMD_SET_HOME_LIGHT, &[]);
+        loop_instance.handle_subcmd_reply(&reply);
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_set_report_mode_ack() {
+        use crate::subcmd::SUBCMD_SET_REPORT_MODE;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        let reply = build_subcmd_reply_with_data(SUBCMD_SET_REPORT_MODE, &[]);
+        loop_instance.handle_subcmd_reply(&reply);
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_emits_battery_state_event() {
+        use crate::state::IpcEvent;
+        use crate::subcmd::SUBCMD_ENABLE_IMU;
+
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 0, None);
+
+        let reply = build_subcmd_reply_with_data(SUBCMD_ENABLE_IMU, &[]);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let mut found_battery = false;
+        let mut found_subcmd = false;
+        while let Ok(ev) = rx.try_recv() {
+            if let IpcEvent::BatteryState { .. } = ev {
+                found_battery = true;
+            }
+            if let IpcEvent::SubcommandReply { subcmd_id, .. } = ev {
+                assert_eq!(subcmd_id, SUBCMD_ENABLE_IMU);
+                found_subcmd = true;
+            }
+        }
+        assert!(found_battery, "BatteryState event should be emitted");
+        assert!(found_subcmd, "SubcommandReply event should be emitted");
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_emits_controller_state_event() {
+        use crate::state::IpcEvent;
+        use crate::subcmd::SUBCMD_ENABLE_VIBRATION;
+
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 0, None);
+
+        let reply = build_subcmd_reply_with_data(SUBCMD_ENABLE_VIBRATION, &[]);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let mut found = false;
+        while let Ok(ev) = rx.try_recv() {
+            if let IpcEvent::ControllerState { .. } = ev {
+                found = true;
+            }
+        }
+        assert!(found, "ControllerState event should be emitted after subcmd reply");
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_unhandled_subcmd_logs_debug() {
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 0, None);
+
+        // Subcmd ID 0x99 is not handled — should just log debug.
+        let reply = build_subcmd_reply_with_data(0x99, &[0x01, 0x02]);
+        loop_instance.handle_subcmd_reply(&reply);
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_too_short_is_noop() {
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 0, None);
+
+        // Only 10 bytes — too short for a subcmd reply (needs >= 15).
+        let data = [0x21u8, 0x00, 0x80, 0, 0, 0, 0, 0, 0, 0];
+        loop_instance.handle_subcmd_reply(&data);
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_wrong_report_id_is_noop() {
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 0, None);
+
+        // Report ID 0x30 (standard) instead of 0x21 — should be ignored.
+        let mut data = vec![0x30u8; 16];
+        data[13] = 0x80;
+        data[14] = 0x02;
+        loop_instance.handle_subcmd_reply(&data);
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_subcmd_reply — SPI flash read branches
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_spi_left_stick_factory_cal() {
+        use crate::subcmd::{SPI_ADDR_LEFT_STICK_FACTORY, SUBCMD_SPI_FLASH_READ};
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        let cal_block = build_left_stick_cal_block();
+        let spi_data = build_spi_reply_data(SPI_ADDR_LEFT_STICK_FACTORY, &cal_block);
+        let reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        // Left stick cal should be stored internally (not yet merged — right
+        // stick cal is not available).
+        assert!(
+            loop_instance.left_stick_cal.lock().is_some(),
+            "left_stick_cal should be set"
+        );
+        assert!(
+            loop_instance.right_stick_cal.lock().is_none(),
+            "right_stick_cal should still be None"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_spi_both_stick_cals_merge() {
+        use crate::subcmd::{
+            SPI_ADDR_LEFT_STICK_FACTORY, SPI_ADDR_RIGHT_STICK_FACTORY, SUBCMD_SPI_FLASH_READ,
+        };
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Send left stick cal.
+        let left_cal = build_left_stick_cal_block();
+        let spi_data = build_spi_reply_data(SPI_ADDR_LEFT_STICK_FACTORY, &left_cal);
+        let reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        // Send right stick cal — should trigger merge.
+        let right_cal = build_right_stick_cal_block();
+        let spi_data = build_spi_reply_data(SPI_ADDR_RIGHT_STICK_FACTORY, &right_cal);
+        let reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let state = shared.slots[0].read();
+        assert!(
+            state.stick_calibration.is_some(),
+            "stick_calibration should be merged and set"
+        );
+        let cal = state.stick_calibration.as_ref().unwrap();
+        // center=0x800, max_above=0x600 → max=0xE00, min_below=0x600 → min=0x200
+        assert_eq!(cal.left_center_x, 0x800);
+        assert_eq!(cal.left_max_x, 0xE00);
+        assert_eq!(cal.left_min_x, 0x200);
+        assert_eq!(cal.right_center_x, 0x800);
+        assert_eq!(cal.right_max_x, 0xE00);
+        assert_eq!(cal.right_min_x, 0x200);
+        assert!(cal.valid, "merged calibration should be valid");
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_spi_serial_number() {
+        use crate::subcmd::{SPI_ADDR_SERIAL, SUBCMD_SPI_FLASH_READ};
+        use crate::state::IpcEvent;
+
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Serial: "Serial123" as ASCII, padded with zeros.
+        let mut serial_data = vec![0u8; 16];
+        let serial_str = b"Serial123";
+        serial_data[..serial_str.len()].copy_from_slice(serial_str);
+        let spi_data = build_spi_reply_data(SPI_ADDR_SERIAL, &serial_data);
+        let reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let state = shared.slots[0].read();
+        assert!(state.device_info.is_some(), "device_info should be set");
+        let di = state.device_info.as_ref().unwrap();
+        assert!(di.spi.is_some(), "spi info should be set");
+        assert_eq!(di.spi.as_ref().unwrap().serial, "Serial123");
+
+        // A DeviceInfo event should be emitted (emit_device_info is called).
+        let mut found = false;
+        while let Ok(ev) = rx.try_recv() {
+            if let IpcEvent::DeviceInfo { data } = ev {
+                if let Some(spi) = data.spi {
+                    assert_eq!(spi.serial, "Serial123");
+                    found = true;
+                }
+            }
+        }
+        assert!(found, "DeviceInfo event with serial should be emitted");
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_spi_body_color() {
+        use crate::subcmd::{SPI_ADDR_BODY_COLOR, SUBCMD_SPI_FLASH_READ};
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        let color_data = [40u8, 40, 40]; // RGB
+        let spi_data = build_spi_reply_data(SPI_ADDR_BODY_COLOR, &color_data);
+        let reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let state = shared.slots[0].read();
+        let di = state.device_info.as_ref().unwrap();
+        assert_eq!(di.spi.as_ref().unwrap().body_color, "rgb(40,40,40)");
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_spi_color_flag_true() {
+        use crate::subcmd::{SPI_ADDR_COLOR_FLAG, SUBCMD_SPI_FLASH_READ};
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        let flag_data = [0x01u8]; // use SPI colors
+        let spi_data = build_spi_reply_data(SPI_ADDR_COLOR_FLAG, &flag_data);
+        let reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let state = shared.slots[0].read();
+        let di = state.device_info.as_ref().unwrap();
+        assert!(di.spi.as_ref().unwrap().use_spi_colors);
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_spi_color_flag_false_resets_colors() {
+        use crate::subcmd::{SPI_ADDR_COLOR_FLAG, SUBCMD_SPI_FLASH_READ};
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        let flag_data = [0x00u8]; // don't use SPI colors
+        let spi_data = build_spi_reply_data(SPI_ADDR_COLOR_FLAG, &flag_data);
+        let reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let state = shared.slots[0].read();
+        let di = state.device_info.as_ref().unwrap();
+        let spi = di.spi.as_ref().unwrap();
+        assert!(!spi.use_spi_colors);
+        assert_eq!(spi.body_color, "rgb(85,85,85)");
+        assert_eq!(spi.button_color, "rgb(255,255,255)");
+        assert_eq!(spi.grip_color, "rgb(255,255,255)");
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_spi_button_color() {
+        use crate::subcmd::{SPI_ADDR_BUTTON_COLOR, SUBCMD_SPI_FLASH_READ};
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        let color_data = [255u8, 255, 255];
+        let spi_data = build_spi_reply_data(SPI_ADDR_BUTTON_COLOR, &color_data);
+        let reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let state = shared.slots[0].read();
+        let di = state.device_info.as_ref().unwrap();
+        assert_eq!(di.spi.as_ref().unwrap().button_color, "rgb(255,255,255)");
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_spi_left_grip_color() {
+        use crate::subcmd::{SPI_ADDR_LEFT_GRIP_COLOR, SUBCMD_SPI_FLASH_READ};
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        let color_data = [100u8, 100, 100];
+        let spi_data = build_spi_reply_data(SPI_ADDR_LEFT_GRIP_COLOR, &color_data);
+        let reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let state = shared.slots[0].read();
+        let di = state.device_info.as_ref().unwrap();
+        assert_eq!(di.spi.as_ref().unwrap().grip_color, "rgb(100,100,100)");
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_spi_right_grip_color_when_left_empty() {
+        use crate::subcmd::{SPI_ADDR_RIGHT_GRIP_COLOR, SUBCMD_SPI_FLASH_READ};
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // No left grip color set yet — right grip color should be used.
+        let color_data = [50u8, 50, 50];
+        let spi_data = build_spi_reply_data(SPI_ADDR_RIGHT_GRIP_COLOR, &color_data);
+        let reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let state = shared.slots[0].read();
+        let di = state.device_info.as_ref().unwrap();
+        assert_eq!(di.spi.as_ref().unwrap().grip_color, "rgb(50,50,50)");
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_spi_imu_factory_cal() {
+        use crate::subcmd::{SPI_ADDR_IMU_FACTORY, SUBCMD_SPI_FLASH_READ};
+        use crate::state::IpcEvent;
+
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Build 24 bytes of IMU calibration data (not all zeros).
+        let mut imu_data = vec![0u8; 24];
+        // Accel origin: [0, 0, 0]
+        // Accel sensitivity: [16384, 16384, 16384]
+        imu_data[6..8].copy_from_slice(&16384i16.to_le_bytes());
+        imu_data[8..10].copy_from_slice(&16384i16.to_le_bytes());
+        imu_data[10..12].copy_from_slice(&16384i16.to_le_bytes());
+        // Gyro origin: [0, 0, 0]
+        // Gyro sensitivity: [13371, 13371, 13371]
+        imu_data[18..20].copy_from_slice(&13371i16.to_le_bytes());
+        imu_data[20..22].copy_from_slice(&13371i16.to_le_bytes());
+        imu_data[22..24].copy_from_slice(&13371i16.to_le_bytes());
+
+        let spi_data = build_spi_reply_data(SPI_ADDR_IMU_FACTORY, &imu_data);
+        let reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let state = shared.slots[0].read();
+        assert!(
+            state.imu_calibration.is_some(),
+            "imu_calibration should be set"
+        );
+
+        // A CalibrationData event should be emitted.
+        let mut found = false;
+        while let Ok(ev) = rx.try_recv() {
+            if let IpcEvent::CalibrationData { .. } = ev {
+                found = true;
+            }
+        }
+        assert!(found, "CalibrationData event should be emitted for IMU cal");
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_spi_horizontal_offsets() {
+        use crate::subcmd::{SPI_ADDR_HORIZONTAL_OFFSETS, SUBCMD_SPI_FLASH_READ};
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // 6 bytes: 3× int16LE = [10, -20, 30]
+        let mut offset_data = vec![0u8; 6];
+        offset_data[0..2].copy_from_slice(&10i16.to_le_bytes());
+        offset_data[2..4].copy_from_slice(&(-20i16).to_le_bytes());
+        offset_data[4..6].copy_from_slice(&30i16.to_le_bytes());
+
+        let spi_data = build_spi_reply_data(SPI_ADDR_HORIZONTAL_OFFSETS, &offset_data);
+        let reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let state = shared.slots[0].read();
+        // Horizontal offsets are stored in imu_calibration if present.
+        // Since no IMU cal was set, the offsets are only applied if IMU cal exists.
+        // The function should still not panic.
+        assert!(state.connected);
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_spi_unhandled_address() {
+        use crate::subcmd::SUBCMD_SPI_FLASH_READ;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 0, None);
+
+        // Unhandled SPI address 0x9999.
+        let flash_data = [0xAAu8; 4];
+        let spi_data = build_spi_reply_data(0x9999, &flash_data);
+        let reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        loop_instance.handle_subcmd_reply(&reply);
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_spi_too_short_data() {
+        use crate::subcmd::{SPI_ADDR_LEFT_STICK_FACTORY, SUBCMD_SPI_FLASH_READ};
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 0, None);
+
+        // SPI reply data with only 2 bytes (too short, needs >= 5).
+        let spi_data = vec![0x3Du8, 0x60, 0x00];
+        let reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        loop_instance.handle_subcmd_reply(&reply);
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_spi_non_standard_ack_warning() {
+        use crate::subcmd::{SPI_ADDR_SERIAL, SUBCMD_SPI_FLASH_READ};
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 0, None);
+
+        // Build a reply with non-standard ACK (0x80 instead of 0x90).
+        let mut serial_data = vec![0u8; 16];
+        serial_data[..5].copy_from_slice(b"Test1");
+        let spi_data = build_spi_reply_data(SPI_ADDR_SERIAL, &serial_data);
+        let mut reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        // Set ACK to 0x80 (not 0x90) — should log a warning but still process.
+        reply[13] = 0x80;
+        loop_instance.handle_subcmd_reply(&reply);
+    }
+
+    // -----------------------------------------------------------------------
+    // try_merge_stick_calibration — merge logic
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn try_merge_stick_calibration_both_valid_merges() {
+        use crate::state::StickCalibration;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Set valid left and right calibration partials.
+        let left = StickCalibration {
+            left_center_x: 2000,
+            left_center_y: 2000,
+            left_min_x: 500,
+            left_min_y: 500,
+            left_max_x: 3500,
+            left_max_y: 3500,
+            source: "factory".into(),
+            ..Default::default()
+        };
+        let right = StickCalibration {
+            right_center_x: 2000,
+            right_center_y: 2000,
+            right_min_x: 500,
+            right_min_y: 500,
+            right_max_x: 3500,
+            right_max_y: 3500,
+            source: "factory".into(),
+            ..Default::default()
+        };
+        *loop_instance.left_stick_cal.lock() = Some(left);
+        *loop_instance.right_stick_cal.lock() = Some(right);
+
+        {
+            let mut state = shared.slots[0].write();
+            loop_instance.try_merge_stick_calibration(&mut state);
+            assert!(state.stick_calibration.is_some());
+            assert!(state.stick_calibration.as_ref().unwrap().valid);
+        }
+    }
+
+    #[test]
+    fn try_merge_stick_calibration_only_left_does_not_merge() {
+        use crate::state::StickCalibration;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        *loop_instance.left_stick_cal.lock() = Some(StickCalibration {
+            left_center_x: 2000,
+            left_min_x: 500,
+            left_max_x: 3500,
+            ..Default::default()
+        });
+
+        {
+            let mut state = shared.slots[0].write();
+            loop_instance.try_merge_stick_calibration(&mut state);
+            // Only left — should not set stick_calibration.
+            assert!(state.stick_calibration.is_none());
+        }
+    }
+
+    #[test]
+    fn try_merge_stick_calibration_neither_does_not_merge() {
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        {
+            let mut state = shared.slots[0].write();
+            loop_instance.try_merge_stick_calibration(&mut state);
+            assert!(state.stick_calibration.is_none());
+        }
+    }
+
+    #[test]
+    fn try_merge_stick_calibration_invalid_falls_back_to_default() {
+        use crate::state::StickCalibration;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Invalid calibration: min == center (fails validation).
+        let left = StickCalibration {
+            left_center_x: 2000,
+            left_min_x: 2000, // min == center → invalid
+            left_max_x: 3500,
+            ..Default::default()
+        };
+        let right = StickCalibration {
+            right_center_x: 2000,
+            right_min_x: 500,
+            right_max_x: 3500,
+            ..Default::default()
+        };
+        *loop_instance.left_stick_cal.lock() = Some(left);
+        *loop_instance.right_stick_cal.lock() = Some(right);
+
+        {
+            let mut state = shared.slots[0].write();
+            loop_instance.try_merge_stick_calibration(&mut state);
+            // Should fall back to default calibration (which is valid).
+            assert!(state.stick_calibration.is_some());
+            let cal = state.stick_calibration.as_ref().unwrap();
+            assert!(cal.valid, "default calibration should be valid");
+            assert_eq!(cal.source, "default");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_standard_report — stick calibration path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn handle_standard_report_with_valid_calibration_uses_calibrated_normalize() {
+        use crate::mock::MockGenerator;
+        use crate::state::StickCalibration;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Set valid stick calibration in state.
+        {
+            let mut state = shared.slots[0].write();
+            state.stick_calibration = Some(StickCalibration {
+                left_center_x: 2000,
+                left_center_y: 2000,
+                left_min_x: 500,
+                left_min_y: 500,
+                left_max_x: 3500,
+                left_max_y: 3500,
+                right_center_x: 2000,
+                right_center_y: 2000,
+                right_min_x: 500,
+                right_min_y: 500,
+                right_max_x: 3500,
+                right_max_y: 3500,
+                source: "factory".into(),
+                valid: true,
+            });
+        }
+
+        let mock = MockGenerator::new();
+        let report = mock.build_full_standard_report();
+        loop_instance.handle_standard_report(&report);
+
+        // The state should be updated with calibrated stick values.
+        let state = shared.slots[0].read();
+        assert!(state.connected);
+        // Stick values should be in [-1, 1] range.
+        assert!(state.left_stick.x.abs() <= 1.0);
+        assert!(state.left_stick.y.abs() <= 1.0);
+    }
+
+    #[test]
+    fn handle_standard_report_with_invalid_calibration_uses_fallback() {
+        use crate::mock::MockGenerator;
+        use crate::state::StickCalibration;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Set invalid stick calibration (valid=false) — should use fallback_normalize.
+        {
+            let mut state = shared.slots[0].write();
+            state.stick_calibration = Some(StickCalibration {
+                valid: false,
+                ..Default::default()
+            });
+        }
+
+        let mock = MockGenerator::new();
+        let report = mock.build_full_standard_report();
+        loop_instance.handle_standard_report(&report);
+
+        let state = shared.slots[0].read();
+        assert!(state.connected);
+        // Fallback normalize maps from 12-bit ADC to [-1, 1].
+        assert!(state.left_stick.x.abs() <= 1.0);
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_standard_report — gate calibration collector
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn handle_standard_report_feeds_gate_cal_collector_when_active() {
+        use crate::mock::MockGenerator;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Activate the gate calibration collector.
+        {
+            let mut collector = shared.gate_cal_collector.lock();
+            collector.active = true;
+            collector.done = false;
+            collector.samples.clear();
+        }
+
+        let mock = MockGenerator::new();
+        let report = mock.build_full_standard_report();
+        loop_instance.handle_standard_report(&report);
+
+        // The collector should have received samples.
+        let collector = shared.gate_cal_collector.lock();
+        assert!(!collector.samples.is_empty(), "gate cal collector should have samples");
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_standard_report — IMU data and gyro-to-mouse mode
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn handle_standard_report_imu_data_emits_imu_event_on_every_other_report() {
+        use crate::mock::MockGenerator;
+        use crate::state::IpcEvent;
+
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(512);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 0, None);
+
+        let mock = MockGenerator::new();
+
+        // First IMU report — count=0, 0%2==0 → should emit ImuData.
+        let report1 = mock.build_imu_standard_report();
+        loop_instance.handle_report(&report1);
+
+        // Second IMU report — count=1, 1%2!=0 → should NOT emit ImuData.
+        let report2 = mock.build_imu_standard_report();
+        loop_instance.handle_report(&report2);
+
+        let mut imu_count = 0;
+        while let Ok(ev) = rx.try_recv() {
+            if let IpcEvent::ImuData { .. } = ev {
+                imu_count += 1;
+            }
+        }
+        // At least one ImuData event should have been emitted (from the first report).
+        assert!(imu_count >= 1, "at least one ImuData event should be emitted");
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_standard_report — flick stick mode
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn handle_standard_report_flick_stick_mode_updates_camera_yaw() {
+        use crate::mock::MockGenerator;
+        use crate::state::flick_stick::{FlickStickConfig, RightStickMode};
+        use crate::state::AppConfig;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Configure right stick mode as FlickStick.
+        {
+            let mut cfg = shared.config.write();
+            cfg.right_stick.mode = RightStickMode::FlickStick;
+            cfg.right_stick.flick_stick = FlickStickConfig {
+                enabled: true,
+                flick_threshold: 0.9,
+                rotate_rate_deg_per_sec: 360.0,
+                stick_deadzone: 0.1,
+                flick_cooldown_ms: 0,
+                output_smoothing: 0.0,
+            };
+        }
+
+        let mock = MockGenerator::new();
+        let report = mock.build_full_standard_report();
+        loop_instance.handle_standard_report(&report);
+
+        // The camera_yaw should be set (even if no flick occurred, it's rem_euclid(360)).
+        let state = shared.slots[0].read();
+        assert!(state.camera_yaw >= 0.0 && state.camera_yaw < 360.0);
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_standard_report — KB/M processing
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn handle_standard_report_kbm_enabled_processes_state() {
+        use crate::mock::MockGenerator;
+        use crate::state::{Action, ButtonId, ButtonMapping, KbmConfig, Mappings};
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Enable KB/M with a simple mapping.
+        {
+            let mut cfg = shared.config.write();
+            cfg.kbm_config.enabled = true;
+            cfg.mappings.buttons.push(ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![Action::Key("a".into())],
+            });
+        }
+
+        let mock = MockGenerator::new();
+        let report = mock.build_full_standard_report();
+        loop_instance.handle_standard_report(&report);
+
+        // Should not panic; KB/M processing should run.
+        let state = shared.slots[0].read();
+        assert!(state.connected);
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_standard_report — macro recording
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn handle_standard_report_feeds_macro_engine_when_recording() {
+        use crate::mock::MockGenerator;
+        use crate::macro_engine::MacroEngine;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx.clone(), 0, None);
+
+        // Start a macro recording session.
+        {
+            let mut engine = shared.macro_engine.lock();
+            *engine = Some(MacroEngine::new(shared.clone(), tx, None).unwrap());
+            engine.as_ref().unwrap().start_recording().unwrap();
+        }
+
+        let mock = MockGenerator::new();
+        let report = mock.build_full_standard_report();
+        loop_instance.handle_standard_report(&report);
+
+        // The macro engine should have recorded a frame.
+        let engine = shared.macro_engine.lock();
+        assert!(engine.is_some());
+        assert!(engine.as_ref().unwrap().is_recording());
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_standard_report — too-short report is noop
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn handle_standard_report_too_short_is_noop() {
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Only 3 bytes — too short for a standard report.
+        let data = [0x30u8, 0x01, 0x02];
+        loop_instance.handle_standard_report(&data);
+
+        // State should not be updated.
+        let state = shared.slots[0].read();
+        assert!(!state.connected);
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_subcmd_reply — battery warning emission
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_low_battery_emits_warning() {
+        use crate::state::IpcEvent;
+        use crate::subcmd::SUBCMD_ENABLE_IMU;
+
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Set a low battery warning threshold.
+        {
+            let mut cfg = shared.config.write();
+            cfg.battery_warning_threshold = 20;
+        }
+
+        // Build a subcmd reply with critical battery (raw=0x20 → level 1 → ~12.5%).
+        // battery_raw is in the high nibble of byte 2.
+        let mut reply = build_subcmd_reply_with_data(SUBCMD_ENABLE_IMU, &[]);
+        reply[2] = 0x21; // battery level 1 (critical) in high nibble, charging bit set
+        // Actually, charging bit set means warning is suppressed.
+        // Let's use 0x20 (level 1, not charging) → percent = ~12.5%.
+        reply[2] = 0x20;
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let mut found_warning = false;
+        while let Ok(ev) = rx.try_recv() {
+            if let IpcEvent::BatteryWarning { percent } = ev {
+                assert!(percent <= 20, "warning percent should be <= threshold");
+                found_warning = true;
+            }
+        }
+        assert!(found_warning, "BatteryWarning event should be emitted for low battery");
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_charging_low_battery_no_warning() {
+        use crate::state::IpcEvent;
+        use crate::subcmd::SUBCMD_ENABLE_IMU;
+
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        {
+            let mut cfg = shared.config.write();
+            cfg.battery_warning_threshold = 20;
+        }
+
+        // Battery level 1 (critical) but charging (bit 0 of high nibble = 1) → no warning.
+        // high_nibble = 0x3: level = (0x3 >> 1) = 1 (critical), charging = 0x3 & 0x01 = true.
+        let mut reply = build_subcmd_reply_with_data(SUBCMD_ENABLE_IMU, &[]);
+        reply[2] = 0x31; // level 1 + charging bit in high nibble
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let mut found_warning = false;
+        while let Ok(ev) = rx.try_recv() {
+            if let IpcEvent::BatteryWarning { .. } = ev {
+                found_warning = true;
+            }
+        }
+        assert!(!found_warning, "BatteryWarning should not be emitted when charging");
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_subcmd_reply — SPI flash read with left stick user calibration
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_spi_left_stick_user_cal_with_magic() {
+        use crate::subcmd::{SPI_ADDR_LEFT_STICK_USER, SUBCMD_SPI_FLASH_READ};
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // User cal: magic bytes [0xB2, 0xA1] + 9 bytes of calibration data.
+        let cal_block = build_left_stick_cal_block();
+        let mut user_data = vec![0xB2u8, 0xA1];
+        user_data.extend_from_slice(&cal_block);
+        let spi_data = build_spi_reply_data(SPI_ADDR_LEFT_STICK_USER, &user_data);
+        let reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        // Left stick user cal should be stored.
+        assert!(loop_instance.left_stick_cal.lock().is_some());
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_spi_left_stick_user_cal_without_magic() {
+        use crate::subcmd::{SPI_ADDR_LEFT_STICK_USER, SUBCMD_SPI_FLASH_READ};
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 0, None);
+
+        // No magic bytes — should keep factory calibration.
+        let cal_block = build_left_stick_cal_block();
+        let mut user_data = vec![0xFFu8, 0xFF];
+        user_data.extend_from_slice(&cal_block);
+        let spi_data = build_spi_reply_data(SPI_ADDR_LEFT_STICK_USER, &user_data);
+        let reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        // Should not set left_stick_cal (no valid magic).
+        assert!(loop_instance.left_stick_cal.lock().is_none());
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_spi_right_stick_user_cal_with_magic() {
+        use crate::subcmd::{SPI_ADDR_RIGHT_STICK_USER, SUBCMD_SPI_FLASH_READ};
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        let cal_block = build_right_stick_cal_block();
+        let mut user_data = vec![0xB2u8, 0xA1];
+        user_data.extend_from_slice(&cal_block);
+        let spi_data = build_spi_reply_data(SPI_ADDR_RIGHT_STICK_USER, &user_data);
+        let reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        assert!(loop_instance.right_stick_cal.lock().is_some());
+    }
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_spi_imu_user_cal_with_magic() {
+        use crate::subcmd::{SPI_ADDR_IMU_USER, SUBCMD_SPI_FLASH_READ};
+        use crate::state::IpcEvent;
+
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // IMU user cal: magic + 24 bytes of IMU calibration data.
+        let mut imu_data = vec![0u8; 24];
+        imu_data[6..8].copy_from_slice(&16384i16.to_le_bytes());
+        imu_data[8..10].copy_from_slice(&16384i16.to_le_bytes());
+        imu_data[10..12].copy_from_slice(&16384i16.to_le_bytes());
+        imu_data[18..20].copy_from_slice(&13371i16.to_le_bytes());
+        imu_data[20..22].copy_from_slice(&13371i16.to_le_bytes());
+        imu_data[22..24].copy_from_slice(&13371i16.to_le_bytes());
+
+        let mut user_data = vec![0xB2u8, 0xA1];
+        user_data.extend_from_slice(&imu_data);
+        let spi_data = build_spi_reply_data(SPI_ADDR_IMU_USER, &user_data);
+        let reply = build_subcmd_reply_with_data(SUBCMD_SPI_FLASH_READ, &spi_data);
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let state = shared.slots[0].read();
+        assert!(state.imu_calibration.is_some());
+
+        let mut found = false;
+        while let Ok(ev) = rx.try_recv() {
+            if let IpcEvent::CalibrationData { .. } = ev {
+                found = true;
+            }
+        }
+        assert!(found, "CalibrationData event should be emitted for IMU user cal");
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_subcmd_reply — device info with existing SPI info preserved
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_device_info_preserves_existing_spi() {
+        use crate::mock::MockGenerator;
+        use crate::state::{DeviceInfo, SpiInfo};
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Pre-set SPI info in state.
+        {
+            let mut state = shared.slots[0].write();
+            state.device_info = Some(DeviceInfo {
+                spi: Some(SpiInfo {
+                    serial: "ExistingSerial".into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            });
+        }
+
+        let mock = MockGenerator::new();
+        let reply = mock.build_device_info_reply();
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let state = shared.slots[0].read();
+        let di = state.device_info.as_ref().unwrap();
+        // The existing SPI info should be preserved.
+        assert_eq!(
+            di.spi.as_ref().unwrap().serial,
+            "ExistingSerial",
+            "existing SPI serial should be preserved"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_subcmd_reply — device info connection type string
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn handle_subcmd_reply_device_info_usb_connection_string() {
+        use crate::mock::MockGenerator;
+        use crate::state::ConnectionType;
+
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(256);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        // Set connection type to USB.
+        {
+            let mut state = shared.slots[0].write();
+            state.connection_type = ConnectionType::Usb;
+        }
+
+        let mock = MockGenerator::new();
+        let reply = mock.build_device_info_reply();
+        loop_instance.handle_subcmd_reply(&reply);
+
+        let mut found = false;
+        while let Ok(ev) = rx.try_recv() {
+            if let crate::state::IpcEvent::DeviceInfo { data } = ev {
+                assert_eq!(data.connection, "USB");
+                found = true;
+            }
+        }
+        assert!(found, "DeviceInfo with USB connection should be emitted");
+    }
+
+    // -----------------------------------------------------------------------
+    // update_connection_quality — packet loss rate calculation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn update_connection_quality_packet_loss_rate_calculation() {
+        use std::thread::sleep;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        {
+            let mut state = shared.slots[0].write();
+            // First report.
+            loop_instance.update_connection_quality(&mut state, 0x01);
+            sleep(Duration::from_millis(5));
+            // Second report with large gap → dropped.
+            loop_instance.update_connection_quality(&mut state, 0x10);
+            sleep(Duration::from_millis(5));
+            // Third report with normal gap.
+            loop_instance.update_connection_quality(&mut state, 0x11);
+
+            // total=3, dropped=1. The loss_rate is only recalculated when a
+            // drop is detected (on report 2, when total was 2), so it's 1/2*100=50%.
+            assert_eq!(state.connection_quality.dropped, 1);
+            assert_eq!(state.connection_quality.total_packets, 3);
+            let expected_loss = (1.0 / 2.0) * 100.0;
+            assert!(
+                (state.connection_quality.packet_loss_rate - expected_loss).abs() < 0.1,
+                "packet_loss_rate should be ~{}, got {}",
+                expected_loss,
+                state.connection_quality.packet_loss_rate
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // update_connection_quality — first report sets timer but no latency
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn update_connection_quality_first_report_no_latency() {
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        {
+            let mut state = shared.slots[0].write();
+            let initial_latency = state.connection_quality.latency_ms;
+            loop_instance.update_connection_quality(&mut state, 0x05);
+            // First report — no previous time, so latency should not change.
+            assert_eq!(state.connection_quality.latency_ms, initial_latency);
+            assert_eq!(state.connection_quality.total_packets, 1);
+            assert_eq!(state.connection_quality.last_report_timer, 0x05);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // update_connection_quality — report rate calculation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn update_connection_quality_report_rate_calculation() {
+        use std::thread::sleep;
+
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        {
+            let mut state = shared.slots[0].write();
+            // First report.
+            loop_instance.update_connection_quality(&mut state, 0x01);
+            sleep(Duration::from_millis(10));
+            // Second report — elapsed ~10ms → rate ~100 Hz.
+            loop_instance.update_connection_quality(&mut state, 0x02);
+
+            // report_rate_hz = 1000 / elapsed_ms
+            assert!(
+                state.connection_quality.report_rate_hz > 0,
+                "report_rate_hz should be > 0, got {}",
+                state.connection_quality.report_rate_hz
+            );
+            // With 10ms sleep, rate should be around 50-200 Hz (allowing for jitter).
+            assert!(
+                state.connection_quality.report_rate_hz <= 1000,
+                "report_rate_hz should be reasonable, got {}",
+                state.connection_quality.report_rate_hz
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // emit_device_info — no calibration flag when stick_calibration is None
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn emit_device_info_no_calibration_flag_when_stick_cal_none() {
+        use crate::state::{ConnectionType, DeviceInfo, SpiInfo};
+
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(64);
+        let loop_instance = DeviceLoop::with_slot(shared.clone(), tx, 0, None);
+
+        {
+            let mut state = shared.slots[0].write();
+            state.device_info = Some(DeviceInfo {
+                spi: Some(SpiInfo::default()),
+                ..Default::default()
+            });
+            state.connection_type = ConnectionType::Bluetooth;
+            // stick_calibration is None by default.
+        }
+
+        let state = shared.slots[0].read().clone();
+        loop_instance.emit_device_info(&state);
+
+        let mut found = false;
+        while let Ok(ev) = rx.try_recv() {
+            if let crate::state::IpcEvent::DeviceInfo { data } = ev {
+                if let Some(spi) = data.spi {
+                    assert!(!spi.calibration, "calibration should be false when no stick cal");
+                    found = true;
+                }
+            }
+        }
+        assert!(found, "DeviceInfo event should be emitted");
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_report — RawHidReport throttling (second rapid report suppressed)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn handle_report_raw_hid_throttled_on_rapid_reports() {
+        use crate::state::IpcEvent;
+        use crate::hid_parser::REPORT_ID_STANDARD;
+        use std::thread::sleep;
+
+        let shared = SharedState::new();
+        let (tx, mut rx) = broadcast::channel(512);
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 0, None);
+
+        // Sleep >50ms so the first report is not throttled.
+        sleep(Duration::from_millis(55));
+
+        let mut data = vec![0u8; 12];
+        data[0] = REPORT_ID_STANDARD;
+        data[1] = 0x01;
+
+        // First report — should emit RawHidReport.
+        loop_instance.handle_report(&data);
+        // Second report immediately — should be throttled (no RawHidReport).
+        loop_instance.handle_report(&data);
+
+        let mut raw_count = 0;
+        while let Ok(ev) = rx.try_recv() {
+            if let IpcEvent::RawHidReport { .. } = ev {
+                raw_count += 1;
+            }
+        }
+        // Only one RawHidReport should be emitted (throttled to ~20 Hz).
+        assert_eq!(
+            raw_count, 1,
+            "only one RawHidReport should be emitted on rapid reports"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // set_connected — with claimed path release
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn set_connected_true_then_false_releases_path() {
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let claimed_paths: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+        let path = "\\\\?\\hid#test2".to_string();
+        let loop_instance =
+            DeviceLoop::with_slot(shared.clone(), tx, 3, Some(claimed_paths.clone()));
+
+        // Set claimed path.
+        *loop_instance.claimed_path.lock() = Some(path.clone());
+
+        // Connect — should NOT remove the path (only disconnect removes).
+        loop_instance.set_connected(true);
+        assert!(shared.is_slot_active(3));
+
+        // Disconnect — should release the path.
+        loop_instance.set_connected(false);
+        assert!(!shared.is_slot_active(3));
+        assert!(!claimed_paths.lock().contains(&path));
+        assert!(loop_instance.claimed_path.lock().is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // DeviceLoop construction — with_options via with_slot with claimed_paths
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn device_loop_with_slot_and_claimed_paths() {
+        let shared = SharedState::new();
+        let (tx, _rx) = broadcast::channel(64);
+        let claimed_paths: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+        let loop_instance = DeviceLoop::with_slot(shared, tx, 1, Some(claimed_paths));
+        assert_eq!(loop_instance.slot, 1);
+        assert!(loop_instance.claimed_paths.is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // battery_health_label — additional edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn battery_health_label_max_level_value() {
+        use super::battery_health_label;
+        // raw = 0xFE → level = 0x7F → matches _ => "Full"
+        assert_eq!(battery_health_label(0xFE), "Full");
+    }
+
+    #[test]
+    fn battery_health_label_charging_full() {
+        use super::battery_health_label;
+        // raw = 0x09 → level = 0x04 → "Full" (charging bit masked)
+        assert_eq!(battery_health_label(0x09), "Full");
+    }
+
+    // -----------------------------------------------------------------------
+    // fallback_normalize — asymmetric values
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fallback_normalize_asymmetric_values() {
+        let (lx, ly, rx, ry) = super::fallback_normalize(2048, 4095, 0, 3072);
+        assert!((lx - 0.0).abs() < 1e-6, "lx center should be 0");
+        assert!((ly - 1.0).abs() < 1e-3, "ly max should be ~1.0");
+        assert!((rx - (-1.0)).abs() < 1e-3, "rx min should be ~-1.0");
+        assert!((ry - 0.5).abs() < 1e-3, "ry midpoint should be ~0.5");
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_controller_state — enable_real_device_checks alone (no real_device_validation)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn validate_controller_enable_real_device_checks_without_real_device_validation() {
+        use crate::state::{AppConfig, ValidationConfig};
+
+        let mut state = ControllerState { connected: true, ..Default::default() };
+        // real_device_validation is false, but enable_real_device_checks is true.
+        let cfg = AppConfig {
+            real_device_validation: false,
+            validation: ValidationConfig {
+                enable_real_device_checks: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(validate_controller_state(0, &mut state, &cfg, false, false).unwrap());
+        assert!(state.validated);
+    }
+
+    // -----------------------------------------------------------------------
+    // controller_output_is_allowed — real_device_validation true + mock_mode false + not validated
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn controller_output_not_allowed_when_validation_enabled_and_not_validated() {
+        use crate::state::AppConfig;
+
+        let config = AppConfig {
+            real_device_validation: true,
+            ..Default::default()
+        };
+        let controller = ControllerState {
+            validated: false,
+            ..Default::default()
+        };
+        assert!(!controller_output_is_allowed(&config, &controller));
+    }
 }

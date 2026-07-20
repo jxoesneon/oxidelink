@@ -814,7 +814,7 @@ fn get_proc<T>(module: HMODULE, name: &str) -> Option<T> {
 // ---------------------------------------------------------------------------
 
 /// Aggregated ViGEmBus status reported to the frontend.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct VigemBusStatus {
     /// `true` if the ViGEmBus kernel driver service is installed.
     pub driver_installed: bool,
@@ -1636,5 +1636,567 @@ mod tests {
         assert!(!status.virtual_pad_connected);
         assert!(!status.xbox_target_connected);
         assert!(!status.ds4_target_connected);
+    }
+
+    // ---- Extended Ds4Report conversion tests ----
+
+    #[test]
+    fn ds4_report_all_buttons_and_triggers_and_dpad_combined() {
+        let state = XInputState {
+            buttons: XINPUT_GAMEPAD_A
+                | XINPUT_GAMEPAD_B
+                | XINPUT_GAMEPAD_X
+                | XINPUT_GAMEPAD_Y
+                | XINPUT_GAMEPAD_LEFT_SHOULDER
+                | XINPUT_GAMEPAD_RIGHT_SHOULDER
+                | XINPUT_GAMEPAD_LEFT_THUMB
+                | XINPUT_GAMEPAD_RIGHT_THUMB
+                | XINPUT_GAMEPAD_BACK
+                | XINPUT_GAMEPAD_START
+                | XINPUT_GAMEPAD_GUIDE
+                | XINPUT_GAMEPAD_DPAD_UP
+                | XINPUT_GAMEPAD_DPAD_RIGHT,
+            left_trigger: 255,
+            right_trigger: 255,
+            thumb_lx: -32768,
+            thumb_ly: 32767,
+            thumb_rx: 0,
+            thumb_ry: 0,
+        };
+        let r = Ds4Report::from(&state);
+
+        // All face/shoulder/thumb/menu buttons set.
+        assert!(r.w_buttons & DS4_BUTTON_CROSS != 0);
+        assert!(r.w_buttons & DS4_BUTTON_CIRCLE != 0);
+        assert!(r.w_buttons & DS4_BUTTON_SQUARE != 0);
+        assert!(r.w_buttons & DS4_BUTTON_TRIANGLE != 0);
+        assert!(r.w_buttons & DS4_BUTTON_SHOULDER_LEFT != 0);
+        assert!(r.w_buttons & DS4_BUTTON_SHOULDER_RIGHT != 0);
+        assert!(r.w_buttons & DS4_BUTTON_THUMB_LEFT != 0);
+        assert!(r.w_buttons & DS4_BUTTON_THUMB_RIGHT != 0);
+        assert!(r.w_buttons & DS4_BUTTON_SHARE != 0);
+        assert!(r.w_buttons & DS4_BUTTON_OPTIONS != 0);
+        assert!(r.w_buttons & DS4_BUTTON_TRIGGER_LEFT != 0);
+        assert!(r.w_buttons & DS4_BUTTON_TRIGGER_RIGHT != 0);
+        // D-pad NE.
+        assert_eq!(r.w_buttons & 0xF, DS4_DPAD_NORTHEAST);
+        // PS button via guide.
+        assert!(r.b_special & DS4_SPECIAL_BUTTON_PS != 0);
+        // Triggers copied.
+        assert_eq!(r.b_trigger_l, 255);
+        assert_eq!(r.b_trigger_r, 255);
+        // Axes scaled.
+        assert_eq!(r.b_thumb_lx, 0x00);
+        assert_eq!(r.b_thumb_ly, 0xFF);
+        assert_eq!(r.b_thumb_rx, 0x80);
+        assert_eq!(r.b_thumb_ry, 0x80);
+    }
+
+    #[test]
+    fn ds4_report_conflicting_dpad_all_four_pressed() {
+        // Up+Down+Left+Right: the if-chain checks up&&right first → NE.
+        let state = XInputState {
+            buttons: XINPUT_GAMEPAD_DPAD_UP
+                | XINPUT_GAMEPAD_DPAD_DOWN
+                | XINPUT_GAMEPAD_DPAD_LEFT
+                | XINPUT_GAMEPAD_DPAD_RIGHT,
+            ..Default::default()
+        };
+        assert_eq!(Ds4Report::from(&state).w_buttons & 0xF, DS4_DPAD_NORTHEAST);
+    }
+
+    #[test]
+    fn ds4_report_down_and_left_resolves_to_southwest() {
+        let state = XInputState {
+            buttons: XINPUT_GAMEPAD_DPAD_DOWN | XINPUT_GAMEPAD_DPAD_LEFT,
+            ..Default::default()
+        };
+        assert_eq!(Ds4Report::from(&state).w_buttons & 0xF, DS4_DPAD_SOUTHWEST);
+    }
+
+    #[test]
+    fn ds4_report_triggers_only_no_face_buttons() {
+        let state = XInputState {
+            left_trigger: 128,
+            right_trigger: 1,
+            ..Default::default()
+        };
+        let r = Ds4Report::from(&state);
+        // Trigger button bits set, but no face buttons.
+        assert!(r.w_buttons & DS4_BUTTON_TRIGGER_LEFT != 0);
+        assert!(r.w_buttons & DS4_BUTTON_TRIGGER_RIGHT != 0);
+        assert_eq!(r.w_buttons & DS4_BUTTON_CROSS, 0);
+        assert_eq!(r.w_buttons & DS4_BUTTON_CIRCLE, 0);
+        assert_eq!(r.w_buttons & DS4_BUTTON_SQUARE, 0);
+        assert_eq!(r.w_buttons & DS4_BUTTON_TRIANGLE, 0);
+        assert_eq!(r.b_trigger_l, 128);
+        assert_eq!(r.b_trigger_r, 1);
+    }
+
+    #[test]
+    fn ds4_report_trigger_button_bit_clear_when_other_trigger_nonzero() {
+        let state = XInputState {
+            left_trigger: 100,
+            right_trigger: 0,
+            ..Default::default()
+        };
+        let r = Ds4Report::from(&state);
+        assert!(r.w_buttons & DS4_BUTTON_TRIGGER_LEFT != 0);
+        assert!(r.w_buttons & DS4_BUTTON_TRIGGER_RIGHT == 0);
+    }
+
+    #[test]
+    fn ds4_report_axis_quarter_and_half_positions() {
+        // -16384 is roughly 1/4 from min → should map near 0x40.
+        let state = XInputState {
+            thumb_lx: -16384,
+            thumb_ly: 16384,
+            thumb_rx: -8192,
+            thumb_ry: 8192,
+            ..Default::default()
+        };
+        let r = Ds4Report::from(&state);
+        // Verify monotonicity: lx < ly and rx < ry.
+        assert!(r.b_thumb_lx < r.b_thumb_ly);
+        assert!(r.b_thumb_rx < r.b_thumb_ry);
+        // Center is 0x80; negative values map below, positive above.
+        assert!(r.b_thumb_lx < 0x80);
+        assert!(r.b_thumb_ly > 0x80);
+        assert!(r.b_thumb_rx < 0x80);
+        assert!(r.b_thumb_ry > 0x80);
+    }
+
+    #[test]
+    fn ds4_report_guide_only_does_not_set_digital_buttons() {
+        let state = XInputState {
+            buttons: XINPUT_GAMEPAD_GUIDE,
+            ..Default::default()
+        };
+        let r = Ds4Report::from(&state);
+        assert_eq!(r.w_buttons & !0xF, 0);
+        assert_eq!(r.w_buttons & 0xF, DS4_DPAD_NONE);
+        assert!(r.b_special & DS4_SPECIAL_BUTTON_PS != 0);
+    }
+
+    #[test]
+    fn ds4_report_special_touchpad_not_set_by_xinput() {
+        // XInput has no touchpad button, so b_special should never have the
+        // touchpad bit set.
+        let state = XInputState {
+            buttons: 0xFFFF,
+            left_trigger: 255,
+            right_trigger: 255,
+            ..Default::default()
+        };
+        let r = Ds4Report::from(&state);
+        assert_eq!(r.b_special & DS4_SPECIAL_BUTTON_TOUCHPAD, 0);
+    }
+
+    // ---- Extended XusbReport tests ----
+
+    #[test]
+    fn xusb_report_all_buttons_set() {
+        let state = XInputState {
+            buttons: 0xFFFF,
+            left_trigger: 255,
+            right_trigger: 255,
+            thumb_lx: -32768,
+            thumb_ly: 32767,
+            thumb_rx: -32768,
+            thumb_ry: 32767,
+        };
+        let report = XusbReport::from(&state);
+        assert_eq!(report.w_buttons, 0xFFFF);
+        assert_eq!(report.b_left_trigger, 255);
+        assert_eq!(report.b_right_trigger, 255);
+        assert_eq!(report.s_thumb_lx, -32768);
+        assert_eq!(report.s_thumb_ly, 32767);
+        assert_eq!(report.s_thumb_rx, -32768);
+        assert_eq!(report.s_thumb_ry, 32767);
+    }
+
+    #[test]
+    fn xusb_report_clone_preserves_all_fields() {
+        let state = XInputState {
+            buttons: 0x0F0F,
+            left_trigger: 77,
+            right_trigger: 88,
+            thumb_lx: 1000,
+            thumb_ly: -2000,
+            thumb_rx: 3000,
+            thumb_ry: -4000,
+        };
+        let report = XusbReport::from(&state);
+        let cloned = report.clone();
+        assert_eq!(cloned.w_buttons, report.w_buttons);
+        assert_eq!(cloned.b_left_trigger, report.b_left_trigger);
+        assert_eq!(cloned.b_right_trigger, report.b_right_trigger);
+        assert_eq!(cloned.s_thumb_lx, report.s_thumb_lx);
+        assert_eq!(cloned.s_thumb_ly, report.s_thumb_ly);
+        assert_eq!(cloned.s_thumb_rx, report.s_thumb_rx);
+        assert_eq!(cloned.s_thumb_ry, report.s_thumb_ry);
+    }
+
+    #[test]
+    fn xusb_report_debug_repr_contains_fields() {
+        let report = XusbReport {
+            w_buttons: 0x1234,
+            b_left_trigger: 56,
+            b_right_trigger: 78,
+            s_thumb_lx: 100,
+            s_thumb_ly: -100,
+            s_thumb_rx: 200,
+            s_thumb_ry: -200,
+        };
+        let dbg = format!("{:?}", report);
+        assert!(dbg.contains("XusbReport"));
+        assert!(dbg.contains("w_buttons"));
+        assert!(dbg.contains("b_left_trigger"));
+        assert!(dbg.contains("s_thumb_lx"));
+    }
+
+    // ---- Extended scale_stick_to_ds4 tests ----
+
+    #[test]
+    fn scale_stick_to_ds4_near_min_is_near_zero() {
+        let val = scale_stick_to_ds4(-32767);
+        assert!(val <= 1, "value just above min should be <= 1, got {}", val);
+    }
+
+    #[test]
+    fn scale_stick_to_ds4_near_max_is_near_255() {
+        let val = scale_stick_to_ds4(32766);
+        assert!(val >= 254, "value just below max should be >= 254, got {}", val);
+    }
+
+    #[test]
+    fn scale_stick_to_ds4_small_negative_below_center() {
+        assert!(scale_stick_to_ds4(-1) < 0x80);
+        assert!(scale_stick_to_ds4(-100) < 0x80);
+    }
+
+    #[test]
+    fn scale_stick_to_ds4_small_positive_at_or_above_center() {
+        // Small positive values may round to exactly 0x80 due to integer
+        // division; use a larger value to guarantee above-center.
+        assert!(scale_stick_to_ds4(1000) > 0x80);
+        assert!(scale_stick_to_ds4(5000) > 0x80);
+    }
+
+    #[test]
+    fn scale_stick_to_ds4_symmetric_values_around_center() {
+        // -v and +v should be roughly symmetric around 0x80.
+        let below = scale_stick_to_ds4(-10000) as i32;
+        let above = scale_stick_to_ds4(10000) as i32;
+        let center = 0x80i32;
+        let dist_below = center - below;
+        let dist_above = above - center;
+        assert!(
+            (dist_below - dist_above).abs() <= 1,
+            "distances should be within 1: below={}, above={}",
+            dist_below,
+            dist_above
+        );
+    }
+
+    // ---- Extended VigemApi completeness ----
+
+    #[test]
+    fn vigem_api_is_target_complete_xbox_when_x360_complete() {
+        let mut api = complete_client_api();
+        api.target_x360_alloc = Some(dummy_alloc);
+        api.target_x360_free = Some(dummy_free);
+        api.target_x360_update = Some(dummy_x360_update);
+        assert!(api.is_target_complete(VirtualControllerType::Xbox360));
+        // DS4 is not complete because ds4 entry points are missing.
+        assert!(!api.is_target_complete(VirtualControllerType::DualShock4));
+    }
+
+    #[test]
+    fn vigem_api_is_target_complete_ds4_when_ds4_complete() {
+        let mut api = complete_client_api();
+        api.target_ds4_alloc = Some(dummy_alloc);
+        api.target_ds4_free = Some(dummy_free);
+        api.target_ds4_update = Some(dummy_ds4_update);
+        assert!(api.is_target_complete(VirtualControllerType::DualShock4));
+        // Xbox is not complete because x360 entry points are missing.
+        assert!(!api.is_target_complete(VirtualControllerType::Xbox360));
+    }
+
+    #[test]
+    fn vigem_api_is_x360_complete_false_when_client_incomplete() {
+        let mut api = VigemApi::default();
+        api.target_x360_alloc = Some(dummy_alloc);
+        api.target_x360_free = Some(dummy_free);
+        api.target_x360_update = Some(dummy_x360_update);
+        // Client entry points missing → not complete.
+        assert!(!api.is_x360_complete());
+    }
+
+    #[test]
+    fn vigem_api_is_ds4_complete_false_when_client_incomplete() {
+        let mut api = VigemApi::default();
+        api.target_ds4_alloc = Some(dummy_alloc);
+        api.target_ds4_free = Some(dummy_free);
+        api.target_ds4_update = Some(dummy_ds4_update);
+        // Client entry points missing → not complete.
+        assert!(!api.is_ds4_complete());
+    }
+
+    #[test]
+    fn vigem_api_add_fn_for_kind_ds4_with_only_register() {
+        // When only ds4_register is set (target_add is None), DS4 should get Some.
+        let mut api = VigemApi::default();
+        api.target_ds4_register = Some(dummy_target_ds4_register);
+        assert!(api.add_fn_for_kind(VirtualControllerType::DualShock4).is_some());
+        // Xbox360 gets None because target_add is None.
+        assert!(api.add_fn_for_kind(VirtualControllerType::Xbox360).is_none());
+    }
+
+    #[test]
+    fn vigem_api_remove_fn_for_kind_ds4_prefers_unregister() {
+        let mut api = VigemApi::default();
+        // Set both; DS4 should prefer ds4_unregister (both are Some, just verify Some).
+        api.target_ds4_unregister = Some(dummy_target_remove);
+        api.target_remove = Some(dummy_target_remove);
+        assert!(api
+            .remove_fn_for_kind(VirtualControllerType::DualShock4)
+            .is_some());
+    }
+
+    #[test]
+    fn vigem_api_remove_fn_for_kind_ds4_with_only_unregister() {
+        let mut api = VigemApi::default();
+        api.target_ds4_unregister = Some(dummy_target_remove);
+        // DS4 gets Some from ds4_unregister; Xbox gets None.
+        assert!(api
+            .remove_fn_for_kind(VirtualControllerType::DualShock4)
+            .is_some());
+        assert!(api
+            .remove_fn_for_kind(VirtualControllerType::Xbox360)
+            .is_none());
+    }
+
+    // ---- Extended VirtualXInput state transitions ----
+
+    #[test]
+    fn virtual_xinput_fallback_set_kind_to_different_kind_updates_kind() {
+        let mut vix = VirtualXInput::new_fallback();
+        assert_eq!(vix.kind(), VirtualControllerType::Xbox360);
+        vix.set_kind(VirtualControllerType::DualShock4);
+        assert_eq!(vix.kind(), VirtualControllerType::DualShock4);
+        assert!(!vix.is_connected());
+        assert!(!vix.is_dll_loaded());
+    }
+
+    #[test]
+    fn virtual_xinput_fallback_set_kind_back_and_forth() {
+        let mut vix = VirtualXInput::new_fallback();
+        vix.set_kind(VirtualControllerType::DualShock4);
+        assert_eq!(vix.kind(), VirtualControllerType::DualShock4);
+        vix.set_kind(VirtualControllerType::Xbox360);
+        assert_eq!(vix.kind(), VirtualControllerType::Xbox360);
+        vix.set_kind(VirtualControllerType::Xbox360);
+        assert_eq!(vix.kind(), VirtualControllerType::Xbox360);
+    }
+
+    #[test]
+    fn virtual_xinput_disconnect_on_fallback_is_safe() {
+        let vix = VirtualXInput::new_fallback();
+        // disconnect consumes self; should not panic.
+        vix.disconnect();
+    }
+
+    #[test]
+    fn virtual_xinput_drop_on_fallback_is_safe() {
+        let vix = VirtualXInput::new_fallback();
+        drop(vix); // should not panic
+    }
+
+    #[test]
+    fn virtual_xinput_new_ds4_fallback_is_disconnected() {
+        let vix = VirtualXInput::new(VirtualControllerType::DualShock4);
+        assert!(!vix.is_connected());
+        assert_eq!(vix.kind(), VirtualControllerType::DualShock4);
+    }
+
+    #[test]
+    fn virtual_xinput_new_xbox_fallback_is_disconnected() {
+        let vix = VirtualXInput::new(VirtualControllerType::Xbox360);
+        assert!(!vix.is_connected());
+        assert_eq!(vix.kind(), VirtualControllerType::Xbox360);
+    }
+
+    #[test]
+    fn virtual_xinput_fallback_update_with_default_state_returns_false() {
+        let vix = VirtualXInput::new_fallback();
+        assert!(!vix.update(&XInputState::default()));
+    }
+
+    #[test]
+    fn virtual_xinput_fallback_is_dll_loaded_false() {
+        let vix = VirtualXInput::new_fallback();
+        assert!(!vix.is_dll_loaded());
+    }
+
+    #[test]
+    fn virtual_xinput_inner_default_kind_is_xbox360() {
+        let inner = VirtualXInputInner::default();
+        assert_eq!(inner.kind, VirtualControllerType::Xbox360);
+        assert!(!inner.connected);
+        assert!(inner.client.is_null());
+        assert!(inner.target.is_null());
+        assert!(inner.module.is_none());
+    }
+
+    // ---- Extended VigemBusStatus serialization ----
+
+    #[test]
+    fn vigem_bus_status_serde_all_bools_true() {
+        let status = VigemBusStatus {
+            driver_installed: true,
+            driver_running: true,
+            dll_found: true,
+            dll_path: Some("C:\\ViGEmClient.dll".into()),
+            virtual_pad_connected: true,
+            xbox_target_connected: true,
+            ds4_target_connected: true,
+            version: Some("1.2.3".into()),
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        let back: VigemBusStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, status);
+    }
+
+    #[test]
+    fn vigem_bus_status_serde_all_bools_false() {
+        let status = VigemBusStatus {
+            driver_installed: false,
+            driver_running: false,
+            dll_found: false,
+            dll_path: None,
+            virtual_pad_connected: false,
+            xbox_target_connected: false,
+            ds4_target_connected: false,
+            version: None,
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        let back: VigemBusStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, status);
+    }
+
+    #[test]
+    fn vigem_bus_status_serde_with_version_string() {
+        let status = VigemBusStatus {
+            driver_installed: true,
+            driver_running: true,
+            dll_found: false,
+            dll_path: None,
+            virtual_pad_connected: false,
+            xbox_target_connected: false,
+            ds4_target_connected: false,
+            version: Some("v2.1.0".into()),
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(json.contains("\"version\":\"v2.1.0\""));
+        let back: VigemBusStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.version, Some("v2.1.0".into()));
+    }
+
+    #[test]
+    fn vigem_bus_status_serde_snake_case_field_names() {
+        let status = VigemBusStatus {
+            driver_installed: true,
+            driver_running: false,
+            dll_found: true,
+            dll_path: None,
+            virtual_pad_connected: true,
+            xbox_target_connected: false,
+            ds4_target_connected: true,
+            version: None,
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(json.contains("\"driver_installed\""));
+        assert!(json.contains("\"driver_running\""));
+        assert!(json.contains("\"dll_found\""));
+        assert!(json.contains("\"dll_path\""));
+        assert!(json.contains("\"virtual_pad_connected\""));
+        assert!(json.contains("\"xbox_target_connected\""));
+        assert!(json.contains("\"ds4_target_connected\""));
+        assert!(json.contains("\"version\""));
+    }
+
+    #[test]
+    fn vigem_bus_status_clone_preserves_all_fields() {
+        let status = VigemBusStatus {
+            driver_installed: true,
+            driver_running: false,
+            dll_found: true,
+            dll_path: Some("path".into()),
+            virtual_pad_connected: true,
+            xbox_target_connected: false,
+            ds4_target_connected: true,
+            version: Some("1.0".into()),
+        };
+        let cloned = status.clone();
+        assert_eq!(cloned.driver_installed, status.driver_installed);
+        assert_eq!(cloned.driver_running, status.driver_running);
+        assert_eq!(cloned.dll_found, status.dll_found);
+        assert_eq!(cloned.dll_path, status.dll_path);
+        assert_eq!(cloned.virtual_pad_connected, status.virtual_pad_connected);
+        assert_eq!(cloned.xbox_target_connected, status.xbox_target_connected);
+        assert_eq!(cloned.ds4_target_connected, status.ds4_target_connected);
+        assert_eq!(cloned.version, status.version);
+    }
+
+    // ---- DS4 report byte layout verification ----
+
+    #[test]
+    fn ds4_report_byte_layout_thumb_axes_first() {
+        // The struct field order is: b_thumb_lx, b_thumb_ly, b_thumb_rx,
+        // b_thumb_ry, w_buttons, b_special, b_trigger_l, b_trigger_r.
+        let report = Ds4Report {
+            b_thumb_lx: 0x11,
+            b_thumb_ly: 0x22,
+            b_thumb_rx: 0x33,
+            b_thumb_ry: 0x44,
+            w_buttons: 0x5566,
+            b_special: 0x77,
+            b_trigger_l: 0x88,
+            b_trigger_r: 0x99,
+        };
+        assert_eq!(report.b_thumb_lx, 0x11);
+        assert_eq!(report.b_thumb_ly, 0x22);
+        assert_eq!(report.b_thumb_rx, 0x33);
+        assert_eq!(report.b_thumb_ry, 0x44);
+        assert_eq!(report.w_buttons, 0x5566);
+        assert_eq!(report.b_special, 0x77);
+        assert_eq!(report.b_trigger_l, 0x88);
+        assert_eq!(report.b_trigger_r, 0x99);
+    }
+
+    #[test]
+    fn ds4_report_dpad_does_not_overlap_button_bits() {
+        // D-pad uses lower nibble (0xF), buttons use bits 4-15.
+        let state = XInputState {
+            buttons: XINPUT_GAMEPAD_A | XINPUT_GAMEPAD_DPAD_DOWN,
+            ..Default::default()
+        };
+        let r = Ds4Report::from(&state);
+        // Cross is bit 5, dpad south is 0x4 → combined = 0x24.
+        assert_eq!(r.w_buttons, DS4_BUTTON_CROSS | DS4_DPAD_SOUTH);
+    }
+
+    #[test]
+    fn ds4_report_w_buttons_upper_bits_preserved() {
+        // Verify that the (buttons & !0xF) mask keeps upper bits and dpad
+        // goes in lower nibble.
+        let state = XInputState {
+            buttons: XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_DPAD_LEFT,
+            ..Default::default()
+        };
+        let r = Ds4Report::from(&state);
+        assert_eq!(r.w_buttons & !0xF, DS4_BUTTON_CIRCLE);
+        assert_eq!(r.w_buttons & 0xF, DS4_DPAD_WEST);
     }
 }

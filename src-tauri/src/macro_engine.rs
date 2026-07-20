@@ -632,6 +632,43 @@ fn diff_controller_states(prev: &ControllerState, next: &ControllerState) -> Vec
 mod tests {
     use super::*;
     use crate::kbm::{InputEvent, MockBackend};
+    use crate::state::{ButtonState, StickState};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Unique counter so parallel tests don't collide on the same temp path.
+    static TEST_ID: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_store() -> MacroStore {
+        let n = TEST_ID.fetch_add(1, Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!(
+            "oxidelink-macro-engine-test-{}-{}.json",
+            std::process::id(),
+            n
+        ));
+        let _ = std::fs::remove_file(&path);
+        MacroStore::with_path(path)
+    }
+
+    fn test_engine() -> (
+        std::sync::Arc<SharedState>,
+        MacroEngine,
+        broadcast::Receiver<IpcEvent>,
+    ) {
+        let shared = SharedState::new();
+        let (tx, rx) = broadcast::channel(64);
+        let engine = MacroEngine::new(shared.clone(), tx, None).unwrap();
+        (shared, engine, rx)
+    }
+
+    fn make_macro(id: &str, steps: Vec<MacroStep>) -> Macro {
+        Macro {
+            id: id.into(),
+            name: id.into(),
+            steps,
+        }
+    }
+
+    // -- Existing playback smoke test ----------------------------------------
 
     #[tokio::test]
     async fn playback_preserves_step_order_with_mock_backend() -> Result<(), String> {
@@ -675,6 +712,606 @@ mod tests {
         assert!(input_rx.try_recv().is_err());
         assert!(shared.active_controller().buttons.a);
         Ok::<(), String>(())
+    }
+
+    // -- MacroStore: with_path, load_from, path ------------------------------
+
+    #[test]
+    fn store_with_path_starts_empty() {
+        let store = temp_store();
+        assert!(store.list().is_empty());
+    }
+
+    #[test]
+    fn store_path_returns_configured_path() {
+        let path = std::env::temp_dir().join("store-path-test.json");
+        let store = MacroStore::with_path(&path);
+        assert_eq!(store.path(), std::path::Path::new(&path));
+    }
+
+    #[test]
+    fn store_load_from_nonexistent_returns_empty() {
+        let path = std::env::temp_dir().join("nonexistent-macro-12345.json");
+        let _ = std::fs::remove_file(&path);
+        let store = MacroStore::load_from(&path).unwrap();
+        assert!(store.list().is_empty());
+    }
+
+    #[test]
+    fn store_load_from_invalid_json_returns_error() {
+        let n = TEST_ID.fetch_add(1, Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!("bad-macro-{}-{}.json", std::process::id(), n));
+        std::fs::write(&path, "not valid json").unwrap();
+        let result = MacroStore::load_from(&path);
+        assert!(result.is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn store_save_inserts_new_macro() {
+        let store = temp_store();
+        let mac = make_macro("new-1", vec![MacroStep::WaitMs(10)]);
+        store.save(&mac).unwrap();
+        assert_eq!(store.list().len(), 1);
+        assert!(store.get("new-1").is_some());
+    }
+
+    #[test]
+    fn store_save_updates_existing_macro_by_id() {
+        let store = temp_store();
+        let mac = make_macro("upd-1", vec![MacroStep::WaitMs(10)]);
+        store.save(&mac).unwrap();
+
+        let mut updated = mac.clone();
+        updated.name = "updated-name".into();
+        updated.steps = vec![MacroStep::WaitMs(20)];
+        store.save(&updated).unwrap();
+
+        assert_eq!(store.list().len(), 1);
+        let loaded = store.get("upd-1").unwrap();
+        assert_eq!(loaded.name, "updated-name");
+        assert_eq!(loaded.steps.len(), 1);
+    }
+
+    #[test]
+    fn store_delete_returns_false_for_unknown_id() {
+        let store = temp_store();
+        let result = store.delete("unknown").unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn store_delete_removes_macro_and_persists() {
+        let store = temp_store();
+        let mac = make_macro("del-1", vec![MacroStep::WaitMs(5)]);
+        store.save(&mac).unwrap();
+        assert!(store.get("del-1").is_some());
+
+        let deleted = store.delete("del-1").unwrap();
+        assert!(deleted);
+        assert!(store.get("del-1").is_none());
+        assert!(store.list().is_empty());
+    }
+
+    #[test]
+    fn store_get_returns_none_for_unknown() {
+        let store = temp_store();
+        assert!(store.get("nope").is_none());
+    }
+
+    #[tokio::test]
+    async fn store_save_async_persists_to_disk() {
+        let store = temp_store();
+        let mac = make_macro("async-1", vec![MacroStep::WaitMs(1)]);
+        store.save_async(&mac).await.unwrap();
+
+        let loaded = MacroStore::load_from(store.path()).unwrap();
+        assert_eq!(loaded.list().len(), 1);
+        assert_eq!(loaded.get("async-1").unwrap().name, "async-1");
+    }
+
+    #[tokio::test]
+    async fn store_persist_async_writes_file() {
+        let store = temp_store();
+        store.save(&make_macro("p-1", vec![MacroStep::WaitMs(1)])).unwrap();
+        // Overwrite via persist_async after modifying in-memory.
+        {
+            let mut list = store.macros.lock();
+            list[0].name = "persisted-async".into();
+        }
+        store.persist_async().await.unwrap();
+        let data = std::fs::read_to_string(store.path()).unwrap();
+        assert!(data.contains("persisted-async"));
+    }
+
+    // -- MacroStep variants and serialization --------------------------------
+
+    #[test]
+    fn macro_step_default_is_wait_ms_zero() {
+        let step = MacroStep::default();
+        assert_eq!(step, MacroStep::WaitMs(0));
+    }
+
+    #[test]
+    fn macro_step_wait_ms_serialization() {
+        let step = MacroStep::WaitMs(250);
+        let json = serde_json::to_string(&step).unwrap();
+        assert!(json.contains("\"type\":\"wait_ms\""));
+        assert!(json.contains("250"));
+        let back: MacroStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(step, back);
+    }
+
+    #[test]
+    fn macro_step_press_button_serialization() {
+        let step = MacroStep::PressButton(ButtonId::A);
+        let json = serde_json::to_string(&step).unwrap();
+        assert!(json.contains("\"type\":\"press_button\""));
+        assert!(json.contains("\"a\""));
+        let back: MacroStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(step, back);
+    }
+
+    #[test]
+    fn macro_step_release_button_serialization() {
+        let step = MacroStep::ReleaseButton(ButtonId::B);
+        let json = serde_json::to_string(&step).unwrap();
+        assert!(json.contains("\"type\":\"release_button\""));
+        let back: MacroStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(step, back);
+    }
+
+    #[test]
+    fn macro_step_key_down_up_serialization() {
+        let down = MacroStep::KeyDown("ctrl".into());
+        let up = MacroStep::KeyUp("v".into());
+        let down_json = serde_json::to_string(&down).unwrap();
+        let up_json = serde_json::to_string(&up).unwrap();
+        assert!(down_json.contains("\"type\":\"key_down\""));
+        assert!(up_json.contains("\"type\":\"key_up\""));
+        assert_eq!(serde_json::from_str::<MacroStep>(&down_json).unwrap(), down);
+        assert_eq!(serde_json::from_str::<MacroStep>(&up_json).unwrap(), up);
+    }
+
+    #[test]
+    fn macro_step_mouse_move_serialization() {
+        let step = MacroStep::MouseMove(100, -50);
+        let json = serde_json::to_string(&step).unwrap();
+        assert!(json.contains("\"type\":\"mouse_move\""));
+        let back: MacroStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(step, back);
+    }
+
+    #[test]
+    fn macro_step_mouse_down_up_serialization() {
+        let down = MacroStep::MouseDown(0);
+        let up = MacroStep::MouseUp(1);
+        let down_json = serde_json::to_string(&down).unwrap();
+        let up_json = serde_json::to_string(&up).unwrap();
+        assert!(down_json.contains("\"type\":\"mouse_down\""));
+        assert!(up_json.contains("\"type\":\"mouse_up\""));
+        assert_eq!(serde_json::from_str::<MacroStep>(&down_json).unwrap(), down);
+        assert_eq!(serde_json::from_str::<MacroStep>(&up_json).unwrap(), up);
+    }
+
+    #[test]
+    fn macro_step_set_stick_serialization() {
+        let step = MacroStep::SetStick(StickSide::Left, 0.5, -0.5);
+        let json = serde_json::to_string(&step).unwrap();
+        assert!(json.contains("\"type\":\"set_stick\""));
+        assert!(json.contains("\"left\""));
+        let back: MacroStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(step, back);
+    }
+
+    #[test]
+    fn macro_step_set_trigger_serialization() {
+        let step = MacroStep::SetTrigger(TriggerSide::Right, 0.75);
+        let json = serde_json::to_string(&step).unwrap();
+        assert!(json.contains("\"type\":\"set_trigger\""));
+        assert!(json.contains("\"right\""));
+        let back: MacroStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(step, back);
+    }
+
+    #[test]
+    fn macro_full_serialization_all_variants() {
+        let mac = make_macro(
+            "full",
+            vec![
+                MacroStep::WaitMs(100),
+                MacroStep::PressButton(ButtonId::A),
+                MacroStep::ReleaseButton(ButtonId::B),
+                MacroStep::KeyDown("ctrl".into()),
+                MacroStep::KeyUp("v".into()),
+                MacroStep::MouseMove(100, -50),
+                MacroStep::MouseDown(0),
+                MacroStep::MouseUp(0),
+                MacroStep::SetStick(StickSide::Left, 0.5, -0.5),
+                MacroStep::SetTrigger(TriggerSide::Right, 0.75),
+            ],
+        );
+        let json = serde_json::to_string(&mac).unwrap();
+        let back: Macro = serde_json::from_str(&json).unwrap();
+        assert_eq!(mac, back);
+    }
+
+    // -- MacroEngine playback: is_playing, cancel ----------------------------
+
+    #[tokio::test]
+    async fn is_playing_false_when_idle() {
+        let (_shared, engine, _rx) = test_engine();
+        assert!(!engine.is_playing());
+    }
+
+    #[tokio::test]
+    async fn stop_playback_returns_false_when_not_playing() {
+        let (_shared, engine, _rx) = test_engine();
+        assert!(!engine.stop_playback());
+    }
+
+    #[tokio::test]
+    async fn play_macro_sets_is_playing_during_playback() {
+        let (_shared, engine, _rx) = test_engine();
+        let mac = make_macro("play-state", vec![MacroStep::WaitMs(2000)]);
+        let engine2 = engine.clone();
+        let mac2 = mac.clone();
+        tokio::spawn(async move {
+            engine2.play_macro(&mac2, None).await;
+        });
+        sleep(Duration::from_millis(10)).await;
+        assert!(engine.is_playing());
+        engine.stop_playback();
+        sleep(Duration::from_millis(20)).await;
+        assert!(!engine.is_playing());
+    }
+
+    #[tokio::test]
+    async fn play_macro_empty_steps_completes_immediately() {
+        let (_shared, engine, _rx) = test_engine();
+        let mac = make_macro("empty", vec![]);
+        engine.play_macro(&mac, None).await;
+        assert!(!engine.is_playing());
+    }
+
+    #[tokio::test]
+    async fn play_macro_cancel_skips_remaining_steps() {
+        let (_shared, engine, _rx) = test_engine();
+        let mac = make_macro(
+            "cancel-test",
+            vec![
+                MacroStep::WaitMs(5000),
+                MacroStep::PressButton(ButtonId::A),
+            ],
+        );
+        let engine2 = engine.clone();
+        let mac2 = mac.clone();
+        tokio::spawn(async move {
+            engine2.play_macro(&mac2, None).await;
+        });
+        sleep(Duration::from_millis(10)).await;
+        assert!(engine.is_playing());
+        assert!(engine.stop_playback());
+        sleep(Duration::from_millis(20)).await;
+        assert!(!engine.is_playing());
+        // The PressButton step should have been skipped.
+        assert!(!_shared.active_controller().buttons.a);
+    }
+
+    // -- Macro recording -----------------------------------------------------
+
+    #[tokio::test]
+    async fn start_recording_sets_is_recording_true() {
+        let (_shared, engine, _rx) = test_engine();
+        assert!(!engine.is_recording());
+        engine.start_recording().unwrap();
+        assert!(engine.is_recording());
+        // Clean up: stop recording (name doesn't matter for this test).
+        // We need to send a controller state or just stop.
+        let _ = engine.stop_recording("test".into()).await;
+    }
+
+    #[tokio::test]
+    async fn start_recording_twice_errors() {
+        let (_shared, engine, _rx) = test_engine();
+        engine.start_recording().unwrap();
+        assert!(engine.start_recording().is_err());
+        let _ = engine.stop_recording("test".into()).await;
+    }
+
+    #[tokio::test]
+    async fn stop_recording_without_start_errors() {
+        let (_shared, engine, _rx) = test_engine();
+        let result = engine.stop_recording("test".into()).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn record_frame_captures_button_press() {
+        let (shared, engine, _rx) = test_engine();
+        engine.start_recording().unwrap();
+
+        let mut state = ControllerState::default();
+        state.buttons.a = true;
+        engine.record_frame(&state, 1000);
+
+        sleep(Duration::from_millis(5)).await;
+
+        let mac = engine.stop_recording("rec-frame".into()).await.unwrap();
+        assert!(mac
+            .steps
+            .iter()
+            .any(|s| matches!(s, MacroStep::PressButton(ButtonId::A))));
+        let _ = &shared;
+    }
+
+    #[tokio::test]
+    async fn record_frame_captures_stick_movement() {
+        let (_shared, engine, _rx) = test_engine();
+        engine.start_recording().unwrap();
+
+        let mut state = ControllerState::default();
+        state.left_stick.x = 0.8;
+        state.left_stick.y = -0.3;
+        engine.record_frame(&state, 2000);
+
+        sleep(Duration::from_millis(5)).await;
+
+        let mac = engine.stop_recording("rec-stick".into()).await.unwrap();
+        assert!(mac
+            .steps
+            .iter()
+            .any(|s| matches!(s, MacroStep::SetStick(StickSide::Left, _, _))));
+    }
+
+    #[tokio::test]
+    async fn record_frame_captures_trigger_change() {
+        let (_shared, engine, _rx) = test_engine();
+        engine.start_recording().unwrap();
+
+        let mut state = ControllerState::default();
+        state.right_trigger = 0.9;
+        engine.record_frame(&state, 3000);
+
+        sleep(Duration::from_millis(5)).await;
+
+        let mac = engine.stop_recording("rec-trigger".into()).await.unwrap();
+        assert!(mac
+            .steps
+            .iter()
+            .any(|s| matches!(s, MacroStep::SetTrigger(TriggerSide::Right, _))));
+    }
+
+    // -- Macro validation: unique_macro_id -----------------------------------
+
+    #[test]
+    fn unique_macro_id_returns_base_when_not_taken() {
+        let store = temp_store();
+        let id = unique_macro_id(&store);
+        assert!(id.starts_with("macro-"));
+    }
+
+    #[test]
+    fn unique_macro_id_appends_suffix_when_base_taken() {
+        let store = temp_store();
+        // Manually insert a macro with the base id pattern.
+        let base = format!("macro-{}", timestamp_now());
+        let mac = make_macro(&base, vec![MacroStep::WaitMs(1)]);
+        store.save(&mac).unwrap();
+
+        let id = unique_macro_id(&store);
+        // The generated id should differ from the base since base is taken.
+        assert_ne!(id, base);
+        assert!(id.starts_with("macro-"));
+    }
+
+    // -- Pure helper functions ------------------------------------------------
+
+    #[test]
+    fn set_button_state_sets_each_button() {
+        let mut buttons = ButtonState::default();
+        set_button_state(&mut buttons, ButtonId::A, true);
+        assert!(buttons.a);
+        set_button_state(&mut buttons, ButtonId::B, true);
+        assert!(buttons.b);
+        set_button_state(&mut buttons, ButtonId::Up, true);
+        assert!(buttons.dpad_up);
+        set_button_state(&mut buttons, ButtonId::Down, true);
+        assert!(buttons.dpad_down);
+        set_button_state(&mut buttons, ButtonId::Left, true);
+        assert!(buttons.dpad_left);
+        set_button_state(&mut buttons, ButtonId::Right, true);
+        assert!(buttons.dpad_right);
+        set_button_state(&mut buttons, ButtonId::L, true);
+        assert!(buttons.l);
+        set_button_state(&mut buttons, ButtonId::R, true);
+        assert!(buttons.r);
+        set_button_state(&mut buttons, ButtonId::Zl, true);
+        assert!(buttons.zl);
+        set_button_state(&mut buttons, ButtonId::Zr, true);
+        assert!(buttons.zr);
+        set_button_state(&mut buttons, ButtonId::Minus, true);
+        assert!(buttons.minus);
+        set_button_state(&mut buttons, ButtonId::Plus, true);
+        assert!(buttons.plus);
+        set_button_state(&mut buttons, ButtonId::Home, true);
+        assert!(buttons.home);
+        set_button_state(&mut buttons, ButtonId::Capture, true);
+        assert!(buttons.capture);
+        set_button_state(&mut buttons, ButtonId::LStick, true);
+        assert!(buttons.stick_l);
+        set_button_state(&mut buttons, ButtonId::RStick, true);
+        assert!(buttons.stick_r);
+    }
+
+    #[test]
+    fn set_button_state_clears_button() {
+        let mut buttons = ButtonState::default();
+        set_button_state(&mut buttons, ButtonId::A, true);
+        assert!(buttons.a);
+        set_button_state(&mut buttons, ButtonId::A, false);
+        assert!(!buttons.a);
+    }
+
+    #[test]
+    fn set_stick_state_clamps_to_range() {
+        let mut stick = StickState::default();
+        set_stick_state(&mut stick, 2.0, -2.0);
+        assert_eq!(stick.x, 1.0);
+        assert_eq!(stick.y, -1.0);
+    }
+
+    #[test]
+    fn set_stick_state_updates_raw_values() {
+        let mut stick = StickState::default();
+        set_stick_state(&mut stick, 0.0, 0.0);
+        // Center (0,0) maps to mid-range raw value.
+        assert_eq!(stick.raw_x, normalized_to_raw(0.0));
+        assert_eq!(stick.raw_y, normalized_to_raw(0.0));
+    }
+
+    #[test]
+    fn normalized_to_raw_center_is_mid_range() {
+        let raw = normalized_to_raw(0.0);
+        assert_eq!(raw, 0x800); // (0+1)/2 * 0xFFF = 2047.5 -> 2048
+    }
+
+    #[test]
+    fn normalized_to_raw_min_is_zero() {
+        let raw = normalized_to_raw(-1.0);
+        assert_eq!(raw, 0);
+    }
+
+    #[test]
+    fn normalized_to_raw_max_is_full_scale() {
+        let raw = normalized_to_raw(1.0);
+        assert_eq!(raw, 0xFFF);
+    }
+
+    #[test]
+    fn normalized_to_raw_clamps_overflow() {
+        let raw = normalized_to_raw(2.0);
+        assert_eq!(raw, 0xFFF);
+    }
+
+    #[test]
+    fn diff_controller_states_no_change_returns_empty() {
+        let state = ControllerState::default();
+        let steps = diff_controller_states(&state, &state);
+        assert!(steps.is_empty());
+    }
+
+    #[test]
+    fn diff_controller_states_button_press_generates_press_step() {
+        let prev = ControllerState::default();
+        let mut next = ControllerState::default();
+        next.buttons.a = true;
+        let steps = diff_controller_states(&prev, &next);
+        assert!(steps
+            .iter()
+            .any(|s| matches!(s, MacroStep::PressButton(ButtonId::A))));
+    }
+
+    #[test]
+    fn diff_controller_states_button_release_generates_release_step() {
+        let mut prev = ControllerState::default();
+        prev.buttons.b = true;
+        let next = ControllerState::default();
+        let steps = diff_controller_states(&prev, &next);
+        assert!(steps
+            .iter()
+            .any(|s| matches!(s, MacroStep::ReleaseButton(ButtonId::B))));
+    }
+
+    #[test]
+    fn diff_controller_states_stick_change_generates_set_stick() {
+        let prev = ControllerState::default();
+        let mut next = ControllerState::default();
+        next.left_stick.x = 0.5;
+        let steps = diff_controller_states(&prev, &next);
+        assert!(steps
+            .iter()
+            .any(|s| matches!(s, MacroStep::SetStick(StickSide::Left, 0.5, _))));
+    }
+
+    #[test]
+    fn diff_controller_states_stick_below_threshold_no_step() {
+        let prev = ControllerState::default();
+        let mut next = ControllerState::default();
+        next.left_stick.x = 0.005; // below 0.01 threshold
+        let steps = diff_controller_states(&prev, &next);
+        assert!(!steps
+            .iter()
+            .any(|s| matches!(s, MacroStep::SetStick(StickSide::Left, _, _))));
+    }
+
+    #[test]
+    fn diff_controller_states_trigger_change_generates_set_trigger() {
+        let prev = ControllerState::default();
+        let mut next = ControllerState::default();
+        next.left_trigger = 0.5;
+        let steps = diff_controller_states(&prev, &next);
+        assert!(steps
+            .iter()
+            .any(|s| matches!(s, MacroStep::SetTrigger(TriggerSide::Left, _))));
+    }
+
+    #[test]
+    fn diff_controller_states_trigger_below_threshold_no_step() {
+        let prev = ControllerState::default();
+        let mut next = ControllerState::default();
+        next.right_trigger = 0.05; // below 0.1 threshold
+        let steps = diff_controller_states(&prev, &next);
+        assert!(!steps
+            .iter()
+            .any(|s| matches!(s, MacroStep::SetTrigger(TriggerSide::Right, _))));
+    }
+
+    #[test]
+    fn diff_controller_states_multiple_changes_all_captured() {
+        let prev = ControllerState::default();
+        let mut next = ControllerState::default();
+        next.buttons.a = true;
+        next.buttons.x = true;
+        next.right_stick.y = -0.8;
+        next.right_trigger = 0.9;
+        let steps = diff_controller_states(&prev, &next);
+        assert!(steps
+            .iter()
+            .any(|s| matches!(s, MacroStep::PressButton(ButtonId::A))));
+        assert!(steps
+            .iter()
+            .any(|s| matches!(s, MacroStep::PressButton(ButtonId::X))));
+        assert!(steps
+            .iter()
+            .any(|s| matches!(s, MacroStep::SetStick(StickSide::Right, _, _))));
+        assert!(steps
+            .iter()
+            .any(|s| matches!(s, MacroStep::SetTrigger(TriggerSide::Right, _))));
+    }
+
+    // -- MacroEngine store helpers -------------------------------------------
+
+    #[test]
+    fn engine_list_returns_store_contents() {
+        let store = temp_store();
+        // We can't easily inject a store into MacroEngine, but we can test
+        // the list/save/delete path through the engine's own store.
+        // MacroEngine::new uses MacroStore::load() which reads the default
+        // config path. Instead, test the store directly.
+        let mac = make_macro("list-1", vec![MacroStep::WaitMs(1)]);
+        store.save(&mac).unwrap();
+        assert_eq!(store.list().len(), 1);
+    }
+
+    #[test]
+    fn engine_save_and_load_roundtrip_through_store() {
+        let store = temp_store();
+        let mac = make_macro("rt-1", vec![MacroStep::PressButton(ButtonId::Y)]);
+        store.save(&mac).unwrap();
+        let loaded = store.get("rt-1").unwrap();
+        assert_eq!(loaded.steps.len(), 1);
+        assert_eq!(loaded.steps[0], MacroStep::PressButton(ButtonId::Y));
     }
 }
 

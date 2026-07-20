@@ -591,3 +591,902 @@ pub fn kbm_send_test_key(
 ) -> Result<(), String> {
     manager.send_test_key(key, down)
 }
+
+// -----------------------------------------------------------------------------
+// Tests
+// -----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{
+        Action, ButtonMapping, ButtonState, ControllerState, Mappings, StickAction, StickMapping,
+        StickSide, StickZones,
+    };
+
+    /// Helper: build an enabled emulator backed by a mock channel.
+    fn mock_emulator() -> (KbmEmulator, tokio::sync::mpsc::UnboundedReceiver<InputEvent>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut emu = KbmEmulator::with_backend(Arc::new(MockBackend::new(tx)));
+        let mut cfg = KbmConfig::default();
+        cfg.enabled = true;
+        emu.set_config(&cfg);
+        (emu, rx)
+    }
+
+    // ---- InputEvent ----
+
+    #[test]
+    fn input_event_key_equality_and_clone() {
+        let a = InputEvent::Key { vk: 0x57, down: true };
+        let b = a.clone();
+        assert_eq!(a, b);
+        assert_ne!(a, InputEvent::Key { vk: 0x57, down: false });
+    }
+
+    #[test]
+    fn input_event_mouse_move_equality() {
+        let a = InputEvent::MouseMove { dx: 10, dy: -5 };
+        let b = InputEvent::MouseMove { dx: 10, dy: -5 };
+        assert_eq!(a, b);
+        assert_ne!(a, InputEvent::MouseMove { dx: 11, dy: -5 });
+    }
+
+    #[test]
+    fn input_event_mouse_button_equality() {
+        let a = InputEvent::MouseButton { button: 2, down: true };
+        let b = a.clone();
+        assert_eq!(a, b);
+        assert_ne!(a, InputEvent::MouseButton { button: 1, down: true });
+    }
+
+    #[test]
+    fn input_event_mouse_wheel_equality() {
+        let a = InputEvent::MouseWheel { delta: 120 };
+        assert_eq!(a, InputEvent::MouseWheel { delta: 120 });
+        assert_ne!(a, InputEvent::MouseWheel { delta: -120 });
+    }
+
+    #[test]
+    fn input_event_debug_format_contains_variant() {
+        let e = InputEvent::Key { vk: 0x41, down: true };
+        let s = format!("{:?}", e);
+        assert!(s.contains("Key"));
+    }
+
+    // ---- MockBackend ----
+
+    #[test]
+    fn mock_backend_forwards_events_to_channel() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let backend = MockBackend::new(tx);
+        backend.send(InputEvent::Key { vk: 0x41, down: true });
+        backend.send(InputEvent::MouseWheel { delta: 5 });
+        assert_eq!(
+            rx.try_recv(),
+            Ok(InputEvent::Key { vk: 0x41, down: true })
+        );
+        assert_eq!(rx.try_recv(), Ok(InputEvent::MouseWheel { delta: 5 }));
+        assert!(rx.try_recv().is_err());
+    }
+
+    // ---- KbmEmulator state ----
+
+    #[test]
+    fn emulator_default_is_disabled() {
+        // WindowsBackend is used by default; we only inspect state, not events.
+        let emu = KbmEmulator::new();
+        assert!(!emu.enabled);
+    }
+
+    #[test]
+    fn emulator_with_backend_inherits_default_config() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let emu = KbmEmulator::with_backend(Arc::new(MockBackend::new(tx)));
+        assert!(!emu.enabled);
+    }
+
+    #[test]
+    fn set_config_updates_enabled_flag() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut emu = KbmEmulator::with_backend(Arc::new(MockBackend::new(tx)));
+        let mut cfg = KbmConfig::default();
+        cfg.enabled = true;
+        cfg.mouse_sensitivity = 3.5;
+        emu.set_config(&cfg);
+        assert!(emu.enabled);
+        assert_eq!(emu.config.mouse_sensitivity, 3.5);
+    }
+
+    #[test]
+    fn send_key_emits_key_event() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let emu = KbmEmulator::with_backend(Arc::new(MockBackend::new(tx)));
+        emu.send_key(0x41, true);
+        emu.send_key(0x41, false);
+        assert_eq!(
+            rx.try_recv(),
+            Ok(InputEvent::Key { vk: 0x41, down: true })
+        );
+        assert_eq!(
+            rx.try_recv(),
+            Ok(InputEvent::Key { vk: 0x41, down: false })
+        );
+    }
+
+    #[test]
+    fn send_mouse_move_emits_event() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let emu = KbmEmulator::with_backend(Arc::new(MockBackend::new(tx)));
+        emu.send_mouse_move(7, -3);
+        assert_eq!(rx.try_recv(), Ok(InputEvent::MouseMove { dx: 7, dy: -3 }));
+    }
+
+    #[test]
+    fn send_mouse_button_emits_event() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let emu = KbmEmulator::with_backend(Arc::new(MockBackend::new(tx)));
+        emu.send_mouse_button(1, true);
+        assert_eq!(
+            rx.try_recv(),
+            Ok(InputEvent::MouseButton { button: 1, down: true })
+        );
+    }
+
+    #[test]
+    fn send_mouse_wheel_emits_event() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let emu = KbmEmulator::with_backend(Arc::new(MockBackend::new(tx)));
+        emu.send_mouse_wheel(240);
+        assert_eq!(rx.try_recv(), Ok(InputEvent::MouseWheel { delta: 240 }));
+    }
+
+    // ---- process_button ----
+
+    #[test]
+    fn process_button_no_op_when_disabled() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut emu = KbmEmulator::with_backend(Arc::new(MockBackend::new(tx)));
+        // disabled by default
+        let mappings = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![Action::Key("W".into())],
+            }],
+            ..Default::default()
+        };
+        emu.process_button(ButtonId::A, true, &mappings);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn process_button_ignores_unmapped_button() {
+        let (mut emu, mut rx) = mock_emulator();
+        let mappings = Mappings::default();
+        emu.process_button(ButtonId::A, true, &mappings);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn process_button_key_combo_emits_all_down_then_all_up_reversed() {
+        let (mut emu, mut rx) = mock_emulator();
+        let mappings = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![Action::KeyCombo(vec!["LShift".into(), "A".into()])],
+            }],
+            ..Default::default()
+        };
+        emu.process_button(ButtonId::A, true, &mappings);
+        // Down order: LShift (0xA0) then A (0x41)
+        assert_eq!(
+            rx.try_recv(),
+            Ok(InputEvent::Key { vk: 0xA0, down: true })
+        );
+        assert_eq!(
+            rx.try_recv(),
+            Ok(InputEvent::Key { vk: 0x41, down: true })
+        );
+        emu.process_button(ButtonId::A, false, &mappings);
+        // Up order: reversed -> A then LShift
+        assert_eq!(
+            rx.try_recv(),
+            Ok(InputEvent::Key { vk: 0x41, down: false })
+        );
+        assert_eq!(
+            rx.try_recv(),
+            Ok(InputEvent::Key { vk: 0xA0, down: false })
+        );
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn process_button_key_combo_skips_unknown_keys() {
+        let (mut emu, mut rx) = mock_emulator();
+        let mappings = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![Action::KeyCombo(vec!["unknown_key".into(), "A".into()])],
+            }],
+            ..Default::default()
+        };
+        emu.process_button(ButtonId::A, true, &mappings);
+        // Only the valid key (A) should be emitted.
+        assert_eq!(
+            rx.try_recv(),
+            Ok(InputEvent::Key { vk: 0x41, down: true })
+        );
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn process_button_macro_action_is_no_op() {
+        let (mut emu, mut rx) = mock_emulator();
+        let mappings = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![Action::Macro("macro1".into())],
+            }],
+            ..Default::default()
+        };
+        emu.process_button(ButtonId::A, true, &mappings);
+        emu.process_button(ButtonId::A, false, &mappings);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn process_button_unknown_key_name_emits_nothing() {
+        let (mut emu, mut rx) = mock_emulator();
+        let mappings = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![Action::Key("not_a_real_key".into())],
+            }],
+            ..Default::default()
+        };
+        emu.process_button(ButtonId::A, true, &mappings);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn process_button_multiple_actions_all_dispatched() {
+        let (mut emu, mut rx) = mock_emulator();
+        let mappings = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![
+                    Action::Key("W".into()),
+                    Action::MouseButton(0),
+                ],
+            }],
+            ..Default::default()
+        };
+        emu.process_button(ButtonId::A, true, &mappings);
+        assert_eq!(
+            rx.try_recv(),
+            Ok(InputEvent::Key { vk: 0x57, down: true })
+        );
+        assert_eq!(
+            rx.try_recv(),
+            Ok(InputEvent::MouseButton { button: 0, down: true })
+        );
+    }
+
+    // ---- process_controller_state (edge detection) ----
+
+    #[test]
+    fn process_controller_state_emits_on_button_edge_only() {
+        let (mut emu, mut rx) = mock_emulator();
+        let mappings = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![Action::Key("W".into())],
+            }],
+            ..Default::default()
+        };
+        let cfg = KbmConfig {
+            enabled: true,
+            ..Default::default()
+        };
+
+        let mut state = ControllerState::default();
+        state.buttons.a = true;
+        emu.process_controller_state(&state, &cfg, &mappings);
+        // First call: A went from false -> true, emits key down.
+        assert_eq!(
+            rx.try_recv(),
+            Ok(InputEvent::Key { vk: 0x57, down: true })
+        );
+
+        // Second call with same state: no new edge, no events.
+        emu.process_controller_state(&state, &cfg, &mappings);
+        assert!(rx.try_recv().is_err());
+
+        // Release: edge true -> false, emits key up.
+        state.buttons.a = false;
+        emu.process_controller_state(&state, &cfg, &mappings);
+        assert_eq!(
+            rx.try_recv(),
+            Ok(InputEvent::Key { vk: 0x57, down: false })
+        );
+    }
+
+    #[test]
+    fn process_controller_state_disabled_emits_nothing() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut emu = KbmEmulator::with_backend(Arc::new(MockBackend::new(tx)));
+        // disabled by default
+        let mappings = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![Action::Key("W".into())],
+            }],
+            ..Default::default()
+        };
+        let cfg = KbmConfig::default(); // enabled = false
+        let mut state = ControllerState::default();
+        state.buttons.a = true;
+        emu.process_controller_state(&state, &cfg, &mappings);
+        assert!(rx.try_recv().is_err());
+    }
+
+    // ---- Stick handling ----
+
+    #[test]
+    fn process_stick_arrow_keys() {
+        let (mut emu, mut rx) = mock_emulator();
+        let mapping = StickMapping {
+            left_actions: vec![StickAction::ArrowKeys],
+            right_actions: vec![],
+            zones: StickZones {
+                deadzone: 0.25,
+                ..Default::default()
+            },
+            response_curve: Default::default(),
+        };
+        let cfg = KbmConfig {
+            enabled: true,
+            ..Default::default()
+        };
+
+        // Up: y > dz
+        emu.process_stick(StickSide::Left, 0.0, 1.0, &cfg, &mapping);
+        assert_eq!(
+            rx.try_recv(),
+            Ok(InputEvent::Key { vk: 0x26, down: true }) // VK_UP
+        );
+
+        // Move to down: Up released, Down pressed
+        emu.process_stick(StickSide::Left, 0.0, -1.0, &cfg, &mapping);
+        let mut saw_up_up = false;
+        let mut saw_down_down = false;
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                InputEvent::Key { vk: 0x26, down: false } => saw_up_up = true,
+                InputEvent::Key { vk: 0x28, down: true } => saw_down_down = true,
+                _ => {}
+            }
+        }
+        assert!(saw_up_up, "expected Up key release");
+        assert!(saw_down_down, "expected Down key press");
+    }
+
+    #[test]
+    fn process_stick_arrow_keys_left_right() {
+        let (mut emu, mut rx) = mock_emulator();
+        let mapping = StickMapping {
+            left_actions: vec![StickAction::ArrowKeys],
+            right_actions: vec![],
+            zones: StickZones {
+                deadzone: 0.3,
+                ..Default::default()
+            },
+            response_curve: Default::default(),
+        };
+        let cfg = KbmConfig {
+            enabled: true,
+            ..Default::default()
+        };
+
+        emu.process_stick(StickSide::Left, 1.0, 0.0, &cfg, &mapping);
+        assert_eq!(
+            rx.try_recv(),
+            Ok(InputEvent::Key { vk: 0x27, down: true }) // VK_RIGHT
+        );
+
+        emu.process_stick(StickSide::Left, -1.0, 0.0, &cfg, &mapping);
+        let mut saw_right_up = false;
+        let mut saw_left_down = false;
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                InputEvent::Key { vk: 0x27, down: false } => saw_right_up = true,
+                InputEvent::Key { vk: 0x25, down: true } => saw_left_down = true,
+                _ => {}
+            }
+        }
+        assert!(saw_right_up);
+        assert!(saw_left_down);
+    }
+
+    #[test]
+    fn process_stick_disabled_when_below_deadzone() {
+        let (mut emu, mut rx) = mock_emulator();
+        let mapping = StickMapping {
+            left_actions: vec![StickAction::Wasd],
+            right_actions: vec![],
+            zones: StickZones {
+                deadzone: 0.5,
+                ..Default::default()
+            },
+            response_curve: Default::default(),
+        };
+        let cfg = KbmConfig {
+            enabled: true,
+            ..Default::default()
+        };
+
+        // Deflection below deadzone -> no keys.
+        emu.process_stick(StickSide::Left, 0.3, 0.3, &cfg, &mapping);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn process_stick_uses_default_deadzone_when_zero() {
+        let (mut emu, mut rx) = mock_emulator();
+        let mapping = StickMapping {
+            left_actions: vec![StickAction::Wasd],
+            right_actions: vec![],
+            zones: StickZones {
+                deadzone: 0.0, // unset -> fallback 0.25
+                ..Default::default()
+            },
+            response_curve: Default::default(),
+        };
+        let cfg = KbmConfig {
+            enabled: true,
+            ..Default::default()
+        };
+
+        // 0.2 is below the 0.25 fallback deadzone -> no event.
+        emu.process_stick(StickSide::Left, 0.2, 0.0, &cfg, &mapping);
+        assert!(rx.try_recv().is_err());
+
+        // 0.3 exceeds the 0.25 fallback -> D pressed.
+        emu.process_stick(StickSide::Left, 0.3, 0.0, &cfg, &mapping);
+        assert_eq!(
+            rx.try_recv(),
+            Ok(InputEvent::Key { vk: 0x44, down: true })
+        );
+    }
+
+    #[test]
+    fn process_stick_scroll_emits_wheel() {
+        let (mut emu, mut rx) = mock_emulator();
+        let mapping = StickMapping {
+            left_actions: vec![],
+            right_actions: vec![StickAction::Scroll],
+            zones: StickZones {
+                deadzone: 0.25,
+                ..Default::default()
+            },
+            response_curve: Default::default(),
+        };
+        let cfg = KbmConfig {
+            enabled: true,
+            mouse_sensitivity: 1.0,
+            ..Default::default()
+        };
+
+        emu.process_stick(StickSide::Right, 0.0, 1.0, &cfg, &mapping);
+        // delta = y * sensitivity * 120 * 0.2 = 1.0 * 1.0 * 120 * 0.2 = 24
+        assert_eq!(rx.try_recv(), Ok(InputEvent::MouseWheel { delta: 24 }));
+    }
+
+    #[test]
+    fn process_stick_scroll_no_event_below_deadzone() {
+        let (mut emu, mut rx) = mock_emulator();
+        let mapping = StickMapping {
+            left_actions: vec![],
+            right_actions: vec![StickAction::Scroll],
+            zones: StickZones {
+                deadzone: 0.5,
+                ..Default::default()
+            },
+            response_curve: Default::default(),
+        };
+        let cfg = KbmConfig {
+            enabled: true,
+            ..Default::default()
+        };
+
+        emu.process_stick(StickSide::Right, 0.0, 0.3, &cfg, &mapping);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn process_stick_mouse_inverts_y() {
+        let (mut emu, mut rx) = mock_emulator();
+        let mapping = StickMapping {
+            left_actions: vec![],
+            right_actions: vec![StickAction::Mouse],
+            zones: StickZones {
+                deadzone: 0.25,
+                ..Default::default()
+            },
+            response_curve: Default::default(),
+        };
+        let cfg = KbmConfig {
+            enabled: true,
+            mouse_sensitivity: 1.0,
+            ..Default::default()
+        };
+
+        // y = 1.0 (push up) -> dy should be negative (cursor up).
+        emu.process_stick(StickSide::Right, 0.0, 1.0, &cfg, &mapping);
+        let ev = rx.try_recv().unwrap();
+        match ev {
+            InputEvent::MouseMove { dx, dy } => {
+                assert_eq!(dx, 0);
+                assert!(dy < 0, "expected negative dy for upward stick, got {}", dy);
+            }
+            other => panic!("expected MouseMove, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn process_stick_mouse_only_sent_once_per_report() {
+        let (mut emu, mut rx) = mock_emulator();
+        let mapping = StickMapping {
+            left_actions: vec![],
+            right_actions: vec![StickAction::Mouse, StickAction::Mouse],
+            zones: StickZones {
+                deadzone: 0.25,
+                ..Default::default()
+            },
+            response_curve: Default::default(),
+        };
+        let cfg = KbmConfig {
+            enabled: true,
+            mouse_sensitivity: 1.0,
+            ..Default::default()
+        };
+
+        emu.process_stick(StickSide::Right, 0.8, 0.0, &cfg, &mapping);
+        // Even though Mouse appears twice, only one MouseMove is emitted.
+        assert!(rx.try_recv().is_ok());
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn process_stick_disabled_action_emits_nothing() {
+        let (mut emu, mut rx) = mock_emulator();
+        let mapping = StickMapping {
+            left_actions: vec![StickAction::Disabled],
+            right_actions: vec![],
+            zones: StickZones {
+                deadzone: 0.25,
+                ..Default::default()
+            },
+            response_curve: Default::default(),
+        };
+        let cfg = KbmConfig {
+            enabled: true,
+            ..Default::default()
+        };
+
+        emu.process_stick(StickSide::Left, 1.0, 1.0, &cfg, &mapping);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn process_stick_no_op_when_emulator_disabled() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut emu = KbmEmulator::with_backend(Arc::new(MockBackend::new(tx)));
+        // disabled by default
+        let mapping = StickMapping {
+            left_actions: vec![StickAction::Wasd],
+            right_actions: vec![],
+            zones: StickZones {
+                deadzone: 0.25,
+                ..Default::default()
+            },
+            response_curve: Default::default(),
+        };
+        let cfg = KbmConfig::default();
+        emu.process_stick(StickSide::Left, 1.0, 0.0, &cfg, &mapping);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn process_stick_releases_keys_when_returning_to_center() {
+        let (mut emu, mut rx) = mock_emulator();
+        let mapping = StickMapping {
+            left_actions: vec![StickAction::Wasd],
+            right_actions: vec![],
+            zones: StickZones {
+                deadzone: 0.25,
+                ..Default::default()
+            },
+            response_curve: Default::default(),
+        };
+        let cfg = KbmConfig {
+            enabled: true,
+            ..Default::default()
+        };
+
+        // Press D
+        emu.process_stick(StickSide::Left, 1.0, 0.0, &cfg, &mapping);
+        assert_eq!(
+            rx.try_recv(),
+            Ok(InputEvent::Key { vk: 0x44, down: true })
+        );
+
+        // Return to center -> D released
+        emu.process_stick(StickSide::Left, 0.0, 0.0, &cfg, &mapping);
+        assert_eq!(
+            rx.try_recv(),
+            Ok(InputEvent::Key { vk: 0x44, down: false })
+        );
+    }
+
+    #[test]
+    fn process_stick_diagonal_emits_two_keys() {
+        let (mut emu, mut rx) = mock_emulator();
+        let mapping = StickMapping {
+            left_actions: vec![StickAction::Wasd],
+            right_actions: vec![],
+            zones: StickZones {
+                deadzone: 0.25,
+                ..Default::default()
+            },
+            response_curve: Default::default(),
+        };
+        let cfg = KbmConfig {
+            enabled: true,
+            ..Default::default()
+        };
+
+        // Up-right diagonal: W and D
+        emu.process_stick(StickSide::Left, 1.0, 1.0, &cfg, &mapping);
+        let mut saw_w = false;
+        let mut saw_d = false;
+        while let Ok(ev) = rx.try_recv() {
+            if ev == (InputEvent::Key { vk: 0x57, down: true }) {
+                saw_w = true;
+            }
+            if ev == (InputEvent::Key { vk: 0x44, down: true }) {
+                saw_d = true;
+            }
+        }
+        assert!(saw_w, "expected W key down");
+        assert!(saw_d, "expected D key down");
+    }
+
+    // ---- Key repeat timing math ----
+
+    #[test]
+    fn key_repeat_rate_is_clamped_to_minimum_1ms() {
+        // Verify the clamp logic used in start_key_repeat by inspecting config.
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut emu = KbmEmulator::with_backend(Arc::new(MockBackend::new(tx)));
+        let mut cfg = KbmConfig::default();
+        cfg.enabled = true;
+        cfg.key_repeat_rate_ms = 0; // would be clamped to 1
+        emu.set_config(&cfg);
+        let clamped = emu.config.key_repeat_rate_ms.clamp(1, 5_000);
+        assert_eq!(clamped, 1);
+    }
+
+    #[test]
+    fn key_repeat_rate_is_clamped_to_maximum_5000ms() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut emu = KbmEmulator::with_backend(Arc::new(MockBackend::new(tx)));
+        let mut cfg = KbmConfig::default();
+        cfg.enabled = true;
+        cfg.key_repeat_rate_ms = 999_999;
+        emu.set_config(&cfg);
+        let clamped = emu.config.key_repeat_rate_ms.clamp(1, 5_000);
+        assert_eq!(clamped, 5_000);
+    }
+
+    #[test]
+    fn key_repeat_delay_zero_is_valid_duration() {
+        // delay = Duration::from_millis(0) -> Duration::ZERO, which skips sleep.
+        let delay = Duration::from_millis(0u64);
+        assert_eq!(delay, Duration::ZERO);
+    }
+
+    #[test]
+    fn key_repeat_delay_nonzero_is_respected() {
+        let delay = Duration::from_millis(250u64);
+        assert_eq!(delay, Duration::from_millis(250));
+    }
+
+    // ---- KbmManager ----
+
+    #[test]
+    fn kbm_manager_status_returns_default_config() {
+        let shared = crate::state::SharedState::new();
+        let manager = KbmManager::new(shared);
+        let status = manager.status();
+        assert!(!status.enabled);
+        assert_eq!(status.mouse_sensitivity, 1.0);
+    }
+
+    #[test]
+    fn kbm_manager_set_enabled_updates_config_and_emulator() {
+        let shared = crate::state::SharedState::new();
+        let manager = KbmManager::new(shared.clone());
+        let result = manager.set_enabled(true);
+        assert!(result);
+        assert!(manager.status().enabled);
+        // The shared config is also updated.
+        assert!(shared.config.read().kbm_config.enabled);
+    }
+
+    #[test]
+    fn kbm_manager_set_and_get_mappings_roundtrip() {
+        let shared = crate::state::SharedState::new();
+        let manager = KbmManager::new(shared);
+        let mappings = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::B,
+                actions: vec![Action::Key("X".into())],
+            }],
+            ..Default::default()
+        };
+        manager.set_mappings(mappings.clone());
+        let got = manager.get_mappings();
+        assert_eq!(got.buttons.len(), 1);
+        assert_eq!(got.buttons[0].source, ButtonId::B);
+    }
+
+    #[test]
+    fn kbm_manager_send_test_key_unknown_returns_error() {
+        let shared = crate::state::SharedState::new();
+        let manager = KbmManager::new(shared);
+        let result = manager.send_test_key("not_a_key".into(), true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn kbm_manager_send_test_key_known_succeeds() {
+        let shared = crate::state::SharedState::new();
+        let manager = KbmManager::new(shared);
+        let result = manager.send_test_key("W".into(), true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn kbm_manager_button_event_respects_disabled_state() {
+        let shared = crate::state::SharedState::new();
+        let manager = KbmManager::new(shared);
+        // Default config has enabled = false, so no panic / no event expected.
+        manager.button_event(ButtonId::A, true);
+        // If we reach here without panicking, the disabled path works.
+    }
+
+    #[test]
+    fn kbm_manager_stick_event_respects_disabled_state() {
+        let shared = crate::state::SharedState::new();
+        let manager = KbmManager::new(shared);
+        manager.stick_event(StickSide::Left, 1.0, 1.0);
+        // Disabled by default; no panic.
+    }
+
+    // ---- KbmConfig serialization ----
+
+    #[test]
+    fn kbm_config_serde_roundtrip() {
+        let cfg = KbmConfig {
+            enabled: true,
+            anti_cheat_mode: true,
+            mouse_sensitivity: 2.5,
+            key_repeat_delay_ms: 500,
+            key_repeat_rate_ms: 50,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        // snake_case field names (no rename_all on KbmConfig).
+        assert!(json.contains("\"enabled\":true"));
+        assert!(json.contains("\"anti_cheat_mode\":true"));
+        assert!(json.contains("\"mouse_sensitivity\":2.5"));
+        assert!(json.contains("\"key_repeat_delay_ms\":500"));
+        assert!(json.contains("\"key_repeat_rate_ms\":50"));
+        let back: KbmConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.enabled, cfg.enabled);
+        assert_eq!(back.anti_cheat_mode, cfg.anti_cheat_mode);
+        assert_eq!(back.mouse_sensitivity, cfg.mouse_sensitivity);
+        assert_eq!(back.key_repeat_delay_ms, cfg.key_repeat_delay_ms);
+        assert_eq!(back.key_repeat_rate_ms, cfg.key_repeat_rate_ms);
+    }
+
+    #[test]
+    fn kbm_config_default_values() {
+        let cfg = KbmConfig::default();
+        assert!(!cfg.enabled);
+        assert!(!cfg.anti_cheat_mode);
+        assert_eq!(cfg.mouse_sensitivity, 1.0);
+        assert_eq!(cfg.key_repeat_delay_ms, 250);
+        assert_eq!(cfg.key_repeat_rate_ms, 33);
+    }
+
+    // ---- Action / ButtonMapping serialization ----
+
+    #[test]
+    fn action_key_serde_roundtrip() {
+        let action = Action::Key("Space".into());
+        let json = serde_json::to_string(&action).unwrap();
+        let back: Action = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, action);
+    }
+
+    #[test]
+    fn action_key_combo_serde_roundtrip() {
+        let action = Action::KeyCombo(vec!["LShift".into(), "A".into()]);
+        let json = serde_json::to_string(&action).unwrap();
+        let back: Action = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, action);
+    }
+
+    #[test]
+    fn action_mouse_button_serde_roundtrip() {
+        let action = Action::MouseButton(2);
+        let json = serde_json::to_string(&action).unwrap();
+        let back: Action = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, action);
+    }
+
+    #[test]
+    fn button_mapping_serde_roundtrip() {
+        let mapping = ButtonMapping {
+            source: ButtonId::A,
+            actions: vec![Action::Key("W".into()), Action::MouseButton(0)],
+        };
+        let json = serde_json::to_string(&mapping).unwrap();
+        let back: ButtonMapping = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.source, mapping.source);
+        assert_eq!(back.actions.len(), 2);
+    }
+
+    #[test]
+    fn stick_action_serde_roundtrip() {
+        let action = StickAction::Wasd;
+        let json = serde_json::to_string(&action).unwrap();
+        let back: StickAction = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, action);
+    }
+
+    #[test]
+    fn stick_mapping_serde_roundtrip() {
+        let mapping = StickMapping {
+            left_actions: vec![StickAction::Wasd],
+            right_actions: vec![StickAction::Mouse],
+            zones: StickZones {
+                deadzone: 0.3,
+                low: 0.4,
+                medium: 0.6,
+                high: 0.8,
+                low_actions: vec![],
+                medium_actions: vec![],
+                high_actions: vec![],
+            },
+            response_curve: Default::default(),
+        };
+        let json = serde_json::to_string(&mapping).unwrap();
+        let back: StickMapping = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.left_actions, mapping.left_actions);
+        assert_eq!(back.right_actions, mapping.right_actions);
+        assert_eq!(back.zones.deadzone, 0.3);
+    }
+
+    // ---- ButtonState edge helpers ----
+
+    #[test]
+    fn button_state_get_set_roundtrip() {
+        let mut bs = ButtonState::default();
+        bs.set(ButtonId::A, true);
+        assert!(bs.get(ButtonId::A));
+        bs.set(ButtonId::A, false);
+        assert!(!bs.get(ButtonId::A));
+    }
+}

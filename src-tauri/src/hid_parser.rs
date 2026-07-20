@@ -594,6 +594,950 @@ pub fn normalize_stick_calibrated(raw: u16, center: u16, min: u16, max: u16) -> 
 }
 
 #[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Encode two 12-bit values into the 3-byte HID stick representation.
+    fn encode_stick_12(raw_x: u16, raw_y: u16) -> [u8; 3] {
+        let b0 = (raw_x & 0xFF) as u8;
+        let b1 = ((raw_x >> 8) & 0x0F) as u8 | (((raw_y & 0x0F) << 4) as u8);
+        let b2 = ((raw_y >> 4) & 0xFF) as u8;
+        [b0, b1, b2]
+    }
+
+    /// Encode two 12-bit values into a 3-byte group (inverse of decode_12bit_pair).
+    fn encode_12bit_pair(v1: u16, v2: u16) -> [u8; 3] {
+        let b0 = (v1 & 0xFF) as u8;
+        let b1 = ((v1 >> 8) & 0x0F) as u8 | (((v2 & 0x0F) << 4) as u8);
+        let b2 = ((v2 >> 4) & 0xFF) as u8;
+        [b0, b1, b2]
+    }
+
+    /// Build a 12-byte 0x3F (default Bluetooth) report.
+    fn build_0x3f(btn1: u8, btn2: u8, hat: u8) -> Vec<u8> {
+        let mut data = vec![0u8; 12];
+        data[0] = REPORT_ID_DEFAULT_BT;
+        data[1] = btn1;
+        data[2] = btn2;
+        data[3] = hat;
+        // Left stick centred at 0x8000 (big-endian)
+        data[4] = 0x80;
+        data[5] = 0x00;
+        data[6] = 0x80;
+        data[7] = 0x00;
+        // Right stick centred at 0x8000 (big-endian)
+        data[8] = 0x80;
+        data[9] = 0x00;
+        data[10] = 0x80;
+        data[11] = 0x00;
+        data
+    }
+
+    // --- struct defaults --------------------------------------------------
+
+    #[test]
+    fn battery_info_default_is_zero() {
+        let b = BatteryInfo::default();
+        assert_eq!(b.raw, 0);
+        assert!(!b.charging);
+        assert_eq!(b.connection_type, 0);
+    }
+
+    #[test]
+    fn imu_frame_default_is_zero() {
+        let f = ImuFrame::default();
+        assert_eq!(f.accel_x, 0);
+        assert_eq!(f.accel_y, 0);
+        assert_eq!(f.accel_z, 0);
+        assert_eq!(f.gyro_x, 0);
+        assert_eq!(f.gyro_y, 0);
+        assert_eq!(f.gyro_z, 0);
+    }
+
+    #[test]
+    fn imu_data_default_has_three_zero_frames() {
+        let d = ImuData::default();
+        assert_eq!(d.frames.len(), 3);
+        for frame in &d.frames {
+            assert_eq!(*frame, ImuFrame::default());
+        }
+    }
+
+    #[test]
+    fn parsed_input_fields_accessible() {
+        let p = ParsedInput {
+            buttons: ButtonState::default(),
+            left_stick: StickState::default(),
+            right_stick: StickState::default(),
+            timer: 0x42,
+            report_id: REPORT_ID_STANDARD,
+            battery: BatteryInfo::default(),
+            imu: None,
+            vibrator: 0,
+        };
+        assert_eq!(p.timer, 0x42);
+        assert_eq!(p.report_id, REPORT_ID_STANDARD);
+        assert!(p.imu.is_none());
+        assert_eq!(p.vibrator, 0);
+    }
+
+    // --- parse_battery_info -----------------------------------------------
+
+    #[test]
+    fn parse_battery_info_not_charging() {
+        let b = parse_battery_info(0x80);
+        assert_eq!(b.raw, 0x08);
+        assert!(!b.charging);
+        assert_eq!(b.connection_type, 0x00);
+    }
+
+    #[test]
+    fn parse_battery_info_charging() {
+        let b = parse_battery_info(0x91);
+        assert_eq!(b.raw, 0x09);
+        assert!(b.charging);
+        assert_eq!(b.connection_type, 0x01);
+    }
+
+    #[test]
+    fn parse_battery_info_connection_type_preserved() {
+        let b = parse_battery_info(0x4A);
+        assert_eq!(b.raw, 0x04);
+        assert!(!b.charging);
+        assert_eq!(b.connection_type, 0x0A);
+    }
+
+    #[test]
+    fn parse_battery_info_zero() {
+        let b = parse_battery_info(0x00);
+        assert_eq!(b.raw, 0);
+        assert!(!b.charging);
+        assert_eq!(b.connection_type, 0);
+    }
+
+    #[test]
+    fn parse_battery_info_max_nibbles() {
+        let b = parse_battery_info(0xFF);
+        assert_eq!(b.raw, 0x0F);
+        assert!(b.charging);
+        assert_eq!(b.connection_type, 0x0F);
+    }
+
+    // --- normalize_stick (12-bit) -----------------------------------------
+
+    #[test]
+    fn normalize_stick_center_is_zero() {
+        assert!((normalize_stick(STICK_CENTER) - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn normalize_stick_max_is_one() {
+        assert!((normalize_stick(STICK_MAX) - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn normalize_stick_min_is_neg_one() {
+        assert!((normalize_stick(STICK_MIN) - (-1.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn normalize_stick_midpoint_positive() {
+        let raw = (STICK_CENTER + STICK_MAX) / 2;
+        let result = normalize_stick(raw);
+        assert!(result > 0.0 && result < 1.0);
+    }
+
+    #[test]
+    fn normalize_stick_midpoint_negative() {
+        let raw = (STICK_CENTER + STICK_MIN) / 2;
+        let result = normalize_stick(raw);
+        assert!(result < 0.0 && result > -1.0);
+    }
+
+    // --- parse_stick (12-bit, 3-byte) -------------------------------------
+
+    #[test]
+    fn parse_stick_short_data_returns_default() {
+        let result = parse_stick(&[0x00, 0x08]);
+        assert_eq!(result, StickState::default());
+    }
+
+    #[test]
+    fn parse_stick_center() {
+        let data = encode_stick_12(STICK_CENTER, STICK_CENTER);
+        let result = parse_stick(&data);
+        assert_eq!(result.raw_x, STICK_CENTER);
+        assert_eq!(result.raw_y, STICK_CENTER);
+        assert!((result.x - 0.0).abs() < f32::EPSILON);
+        assert!((result.y - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn parse_stick_max_values() {
+        let data = encode_stick_12(STICK_MAX, STICK_MAX);
+        let result = parse_stick(&data);
+        assert_eq!(result.raw_x, STICK_MAX);
+        assert_eq!(result.raw_y, STICK_MAX);
+        assert!((result.x - 1.0).abs() < 0.001);
+        assert!((result.y - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_stick_min_values() {
+        let data = encode_stick_12(STICK_MIN, STICK_MIN);
+        let result = parse_stick(&data);
+        assert_eq!(result.raw_x, STICK_MIN);
+        assert_eq!(result.raw_y, STICK_MIN);
+        assert!((result.x - (-1.0)).abs() < 0.001);
+        assert!((result.y - (-1.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_stick_asymmetric_values() {
+        let data = encode_stick_0x3A5_0x6C2();
+        let result = parse_stick(&data);
+        assert_eq!(result.raw_x, 0x3A5);
+        assert_eq!(result.raw_y, 0x6C2);
+    }
+
+    fn encode_stick_0x3A5_0x6C2() -> [u8; 3] {
+        encode_stick_12(0x3A5, 0x6C2)
+    }
+
+    // --- parse_imu --------------------------------------------------------
+
+    #[test]
+    fn parse_imu_three_frames() {
+        let mut data = vec![0u8; 36];
+        // Frame 0
+        data[0..2].copy_from_slice(&100i16.to_le_bytes());
+        data[2..4].copy_from_slice(&200i16.to_le_bytes());
+        data[4..6].copy_from_slice(&300i16.to_le_bytes());
+        data[6..8].copy_from_slice(&400i16.to_le_bytes());
+        data[8..10].copy_from_slice(&500i16.to_le_bytes());
+        data[10..12].copy_from_slice(&600i16.to_le_bytes());
+        // Frame 1
+        data[12..14].copy_from_slice(&1i16.to_le_bytes());
+        data[14..16].copy_from_slice(&1i16.to_le_bytes());
+        data[16..18].copy_from_slice(&1i16.to_le_bytes());
+        data[18..20].copy_from_slice(&1i16.to_le_bytes());
+        data[20..22].copy_from_slice(&1i16.to_le_bytes());
+        data[22..24].copy_from_slice(&1i16.to_le_bytes());
+        // Frame 2 (negative)
+        data[24..26].copy_from_slice(&(-100i16).to_le_bytes());
+        data[26..28].copy_from_slice(&(-200i16).to_le_bytes());
+        data[28..30].copy_from_slice(&(-300i16).to_le_bytes());
+        data[30..32].copy_from_slice(&(-400i16).to_le_bytes());
+        data[32..34].copy_from_slice(&(-500i16).to_le_bytes());
+        data[34..36].copy_from_slice(&(-600i16).to_le_bytes());
+
+        let imu = parse_imu(&data);
+        assert_eq!(imu.frames[0].accel_x, 100);
+        assert_eq!(imu.frames[0].accel_y, 200);
+        assert_eq!(imu.frames[0].accel_z, 300);
+        assert_eq!(imu.frames[0].gyro_x, 400);
+        assert_eq!(imu.frames[0].gyro_y, 500);
+        assert_eq!(imu.frames[0].gyro_z, 600);
+
+        assert_eq!(imu.frames[1].accel_x, 1);
+        assert_eq!(imu.frames[1].gyro_z, 1);
+
+        assert_eq!(imu.frames[2].accel_x, -100);
+        assert_eq!(imu.frames[2].accel_y, -200);
+        assert_eq!(imu.frames[2].gyro_z, -600);
+    }
+
+    #[test]
+    fn parse_imu_short_data_keeps_defaults() {
+        let mut data = vec![0u8; 12];
+        data[0..2].copy_from_slice(&42i16.to_le_bytes());
+        let imu = parse_imu(&data);
+        assert_eq!(imu.frames[0].accel_x, 42);
+        assert_eq!(imu.frames[1], ImuFrame::default());
+        assert_eq!(imu.frames[2], ImuFrame::default());
+    }
+
+    #[test]
+    fn parse_imu_empty_data() {
+        let imu = parse_imu(&[]);
+        assert_eq!(imu.frames[0], ImuFrame::default());
+        assert_eq!(imu.frames[1], ImuFrame::default());
+        assert_eq!(imu.frames[2], ImuFrame::default());
+    }
+
+    // --- parse_standard_report with IMU / vibrator / battery --------------
+
+    #[test]
+    fn parse_standard_report_with_imu() {
+        let mut data = vec![0u8; 49];
+        data[0] = REPORT_ID_STANDARD;
+        data[1] = 0x42;
+        data[2] = 0x80;
+        data[13] = 0x64; // accel_x low byte = 100
+        data[14] = 0x00;
+
+        let parsed = parse_standard_report(&data).expect("should parse");
+        assert!(parsed.imu.is_some(), "0x30 with 49 bytes should have IMU");
+        let imu = parsed.imu.unwrap();
+        assert_eq!(imu.frames[0].accel_x, 100);
+    }
+
+    #[test]
+    fn parse_standard_report_no_imu_when_short() {
+        let mut data = vec![0u8; 12];
+        data[0] = REPORT_ID_STANDARD;
+        let parsed = parse_standard_report(&data).expect("should parse");
+        assert!(parsed.imu.is_none(), "short 0x30 should have no IMU");
+    }
+
+    #[test]
+    fn parse_standard_report_vibrator_byte() {
+        let mut data = vec![0u8; 13];
+        data[0] = REPORT_ID_STANDARD;
+        data[12] = 0x55;
+        let parsed = parse_standard_report(&data).expect("should parse");
+        assert_eq!(parsed.vibrator, 0x55);
+    }
+
+    #[test]
+    fn parse_standard_report_vibrator_default_when_missing() {
+        let mut data = vec![0u8; 12];
+        data[0] = REPORT_ID_STANDARD;
+        let parsed = parse_standard_report(&data).expect("should parse");
+        assert_eq!(parsed.vibrator, 0);
+    }
+
+    #[test]
+    fn parse_standard_report_battery_parsed() {
+        let mut data = vec![0u8; 12];
+        data[0] = REPORT_ID_STANDARD;
+        data[2] = 0x91;
+        let parsed = parse_standard_report(&data).expect("should parse");
+        assert_eq!(parsed.battery.raw, 0x09);
+        assert!(parsed.battery.charging);
+        assert_eq!(parsed.battery.connection_type, 0x01);
+    }
+
+    // --- parse_subcmd_reply: ack_data_type & reply_data -------------------
+
+    #[test]
+    fn parse_subcmd_reply_ack_data_type_simple() {
+        let mut data = vec![0u8; 15];
+        data[0] = REPORT_ID_SUBCMD_REPLY;
+        data[13] = 0x80;
+        data[14] = 0x02;
+        let reply = parse_subcmd_reply(&data).expect("should parse");
+        assert_eq!(reply.ack, 0x80);
+        assert_eq!(reply.ack_data_type, 0x00);
+    }
+
+    #[test]
+    fn parse_subcmd_reply_ack_data_type_nonzero() {
+        let mut data = vec![0u8; 15];
+        data[0] = REPORT_ID_SUBCMD_REPLY;
+        data[13] = 0x85;
+        data[14] = 0x10;
+        let reply = parse_subcmd_reply(&data).expect("should parse");
+        assert_eq!(reply.ack, 0x85);
+        assert_eq!(reply.ack_data_type, 0x05);
+        assert_eq!(reply.subcmd_id, 0x10);
+    }
+
+    #[test]
+    fn parse_subcmd_reply_with_data() {
+        let mut data = vec![0u8; 18];
+        data[0] = REPORT_ID_SUBCMD_REPLY;
+        data[13] = 0x80;
+        data[14] = 0x02;
+        data[15] = 0xAA;
+        data[16] = 0xBB;
+        data[17] = 0xCC;
+        let reply = parse_subcmd_reply(&data).expect("should parse");
+        assert_eq!(reply.reply_data, vec![0xAA, 0xBB, 0xCC]);
+    }
+
+    #[test]
+    fn parse_subcmd_reply_empty_data() {
+        let mut data = vec![0u8; 15];
+        data[0] = REPORT_ID_SUBCMD_REPLY;
+        data[13] = 0x80;
+        data[14] = 0x02;
+        let reply = parse_subcmd_reply(&data).expect("should parse");
+        assert!(reply.reply_data.is_empty());
+    }
+
+    // --- build_rumble_report / build_zero_rumble --------------------------
+
+    #[test]
+    fn build_rumble_report_asymmetric_left_off() {
+        let report = build_rumble_report(0, 1);
+        assert_eq!(report.len(), 49);
+        assert_eq!(report[47], 0x00, "left off -> 0x00");
+        assert_eq!(report[48], 0x20, "right on -> 0x20");
+    }
+
+    #[test]
+    fn build_rumble_report_asymmetric_right_off() {
+        let report = build_rumble_report(1, 0);
+        assert_eq!(report[47], 0x20, "left on -> 0x20");
+        assert_eq!(report[48], 0x00, "right off -> 0x00");
+    }
+
+    #[test]
+    fn build_zero_rumble_all_zeros() {
+        let report = build_zero_rumble();
+        assert_eq!(report.len(), 10);
+        for (i, &b) in report.iter().enumerate() {
+            if i < 2 {
+                continue;
+            }
+            assert_eq!(b, 0, "byte {} should be zero", i);
+        }
+    }
+
+    // --- build_get_state_subcmd / build_set_report_mode_subcmd ------------
+
+    #[test]
+    fn build_get_state_subcmd_format() {
+        let report = build_get_state_subcmd();
+        assert_eq!(report.len(), 11);
+        assert_eq!(report[0], 0x01, "output report ID");
+        assert_eq!(report[1], 0x00, "packet counter");
+        assert_eq!(report[10], 0x00, "subcmd 0x00 = get state");
+        for i in 2..10 {
+            assert_eq!(report[i], 0, "rumble byte {} should be zero", i);
+        }
+    }
+
+    #[test]
+    fn build_set_report_mode_subcmd_format() {
+        let report = build_set_report_mode_subcmd();
+        assert_eq!(report.len(), 12);
+        assert_eq!(report[0], 0x01, "output report ID");
+        assert_eq!(report[1], 0x01, "packet counter");
+        assert_eq!(report[10], 0x03, "subcmd 0x03 = set report mode");
+        assert_eq!(report[11], 0x30, "mode 0x30 = standard");
+    }
+
+    // --- parse_device_info_from_reply -------------------------------------
+
+    #[test]
+    fn parse_device_info_from_reply_valid() {
+        let mut reply_data = vec![0u8; 12];
+        reply_data[0] = 0x01; // fw major
+        reply_data[1] = 0x02; // fw minor
+        reply_data[2] = 0x03; // controller type
+        reply_data[4] = 0xAA; // MAC
+        reply_data[5] = 0xBB;
+        reply_data[6] = 0xCC;
+        reply_data[7] = 0xDD;
+        reply_data[8] = 0xEE;
+        reply_data[9] = 0xFF;
+        reply_data[11] = 0x01; // colors_from_spi = true
+
+        let reply = SubcmdReply {
+            battery: BatteryInfo::default(),
+            buttons: ButtonState::default(),
+            ack: 0x80,
+            ack_data_type: 0,
+            subcmd_id: 0x02,
+            reply_data,
+        };
+
+        let info = parse_device_info_from_reply(&reply);
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.firmware_version, "1.2");
+        assert_eq!(info.controller_type, 0x03);
+        assert_eq!(info.mac_address, "AA:BB:CC:DD:EE:FF");
+        assert!(info.colors_from_spi);
+    }
+
+    #[test]
+    fn parse_device_info_from_reply_colors_false() {
+        let mut reply_data = vec![0u8; 12];
+        reply_data[0] = 0x00;
+        reply_data[1] = 0x01;
+        reply_data[2] = 0x01;
+        reply_data[11] = 0x00; // colors_from_spi = false
+
+        let reply = SubcmdReply {
+            battery: BatteryInfo::default(),
+            buttons: ButtonState::default(),
+            ack: 0x80,
+            ack_data_type: 0,
+            subcmd_id: 0x02,
+            reply_data,
+        };
+
+        let info = parse_device_info_from_reply(&reply).unwrap();
+        assert!(!info.colors_from_spi);
+        assert_eq!(info.firmware_version, "0.1");
+    }
+
+    #[test]
+    fn parse_device_info_from_reply_short_data() {
+        let reply = SubcmdReply {
+            battery: BatteryInfo::default(),
+            buttons: ButtonState::default(),
+            ack: 0x80,
+            ack_data_type: 0,
+            subcmd_id: 0x02,
+            reply_data: vec![0x00, 0x01, 0x02],
+        };
+        assert!(parse_device_info_from_reply(&reply).is_none());
+    }
+
+    // --- parse_stick_calibration_from_reply -------------------------------
+
+    #[test]
+    fn parse_stick_calibration_from_reply_valid() {
+        let center = 0x800u16;
+        let min_below = 0x300u16;
+        let max_above = 0x300u16;
+
+        let mut data = vec![0u8; 18];
+        // Left: [max_above, center, min_below]
+        data[0..3].copy_from_slice(&encode_12bit_pair(max_above, max_above));
+        data[3..6].copy_from_slice(&encode_12bit_pair(center, center));
+        data[6..9].copy_from_slice(&encode_12bit_pair(min_below, min_below));
+        // Right: [center, min_below, max_above]
+        data[9..12].copy_from_slice(&encode_12bit_pair(center, center));
+        data[12..15].copy_from_slice(&encode_12bit_pair(min_below, min_below));
+        data[15..18].copy_from_slice(&encode_12bit_pair(max_above, max_above));
+
+        let reply = SubcmdReply {
+            battery: BatteryInfo::default(),
+            buttons: ButtonState::default(),
+            ack: 0x80,
+            ack_data_type: 0,
+            subcmd_id: 0x10,
+            reply_data: data,
+        };
+
+        let cal = parse_stick_calibration_from_reply(&reply);
+        assert!(cal.is_some());
+        let cal = cal.unwrap();
+        assert!(cal.valid);
+        assert_eq!(cal.left_center_x, center);
+        assert_eq!(cal.left_center_y, center);
+        assert_eq!(cal.left_min_x, center - min_below);
+        assert_eq!(cal.left_max_x, center + max_above);
+        assert_eq!(cal.right_center_x, center);
+        assert_eq!(cal.right_min_y, center - min_below);
+        assert_eq!(cal.right_max_y, center + max_above);
+    }
+
+    #[test]
+    fn parse_stick_calibration_from_reply_short_data() {
+        let reply = SubcmdReply {
+            battery: BatteryInfo::default(),
+            buttons: ButtonState::default(),
+            ack: 0x80,
+            ack_data_type: 0,
+            subcmd_id: 0x10,
+            reply_data: vec![0u8; 10],
+        };
+        assert!(parse_stick_calibration_from_reply(&reply).is_none());
+    }
+
+    // --- normalize_stick_calibrated (hid_parser version) ------------------
+
+    #[test]
+    fn normalize_stick_calibrated_center_returns_zero() {
+        let result = normalize_stick_calibrated(0x800, 0x800, 0x500, 0xB00);
+        assert!((result - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn normalize_stick_calibrated_max_returns_one() {
+        let result = normalize_stick_calibrated(0xB00, 0x800, 0x500, 0xB00);
+        assert!((result - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn normalize_stick_calibrated_min_returns_neg_one() {
+        let result = normalize_stick_calibrated(0x500, 0x800, 0x500, 0xB00);
+        assert!((result - (-1.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn normalize_stick_calibrated_above_max_clamps() {
+        let result = normalize_stick_calibrated(0xFFF, 0x800, 0x500, 0xB00);
+        assert!((result - 1.0).abs() < 0.001, "should clamp to 1.0, got {}", result);
+    }
+
+    #[test]
+    fn normalize_stick_calibrated_below_min_clamps() {
+        let result = normalize_stick_calibrated(0x000, 0x800, 0x500, 0xB00);
+        assert!(
+            (result - (-1.0)).abs() < 0.001,
+            "should clamp to -1.0, got {}",
+            result
+        );
+    }
+
+    #[test]
+    fn normalize_stick_calibrated_zero_range_above() {
+        let result = normalize_stick_calibrated(0x900, 0x800, 0x500, 0x800);
+        assert!((result - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn normalize_stick_calibrated_zero_range_below() {
+        let result = normalize_stick_calibrated(0x700, 0x800, 0x800, 0xB00);
+        assert!((result - 0.0).abs() < f32::EPSILON);
+    }
+
+    // --- parse_stick_calibrated -------------------------------------------
+
+    #[test]
+    fn parse_stick_calibrated_valid_calibration() {
+        let data = encode_stick_12(0xB00, 0x500);
+        let result = parse_stick_calibrated(&data, 0x800, 0x500, 0xB00, 0x800, 0x500, 0xB00, true);
+        assert_eq!(result.raw_x, 0xB00);
+        assert_eq!(result.raw_y, 0x500);
+        assert!((result.x - 1.0).abs() < 0.001);
+        assert!((result.y - (-1.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_stick_calibrated_fallback_when_invalid() {
+        let data = encode_stick_12(STICK_MAX, STICK_MIN);
+        let result = parse_stick_calibrated(&data, 0, 0, 0, 0, 0, 0, false);
+        assert_eq!(result.raw_x, STICK_MAX);
+        assert_eq!(result.raw_y, STICK_MIN);
+        assert!((result.x - 1.0).abs() < 0.001);
+        assert!((result.y - (-1.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_stick_calibrated_short_data() {
+        let result = parse_stick_calibrated(
+            &[0x00, 0x08],
+            0x800,
+            0x500,
+            0xB00,
+            0x800,
+            0x500,
+            0xB00,
+            true,
+        );
+        assert_eq!(result, StickState::default());
+    }
+
+    // --- parse_simple_hid_report (0x3F) -----------------------------------
+
+    #[test]
+    fn parse_simple_hid_report_wrong_id() {
+        let mut data = vec![0u8; 12];
+        data[0] = 0x30;
+        assert!(parse_simple_hid_report(&data).is_none());
+    }
+
+    #[test]
+    fn parse_simple_hid_report_too_short() {
+        let data = vec![0x3F, 0x00, 0x00];
+        assert!(parse_simple_hid_report(&data).is_none());
+    }
+
+    #[test]
+    fn parse_simple_hid_report_dpad_up() {
+        let data = build_0x3f(0, 0, 0);
+        let parsed = parse_simple_hid_report(&data).expect("should parse");
+        assert!(parsed.buttons.dpad_up);
+        assert!(!parsed.buttons.dpad_down);
+        assert!(!parsed.buttons.dpad_left);
+        assert!(!parsed.buttons.dpad_right);
+    }
+
+    #[test]
+    fn parse_simple_hid_report_dpad_right() {
+        let data = build_0x3f(0, 0, 2);
+        let parsed = parse_simple_hid_report(&data).expect("should parse");
+        assert!(parsed.buttons.dpad_right);
+        assert!(!parsed.buttons.dpad_left);
+    }
+
+    #[test]
+    fn parse_simple_hid_report_dpad_down() {
+        let data = build_0x3f(0, 0, 4);
+        let parsed = parse_simple_hid_report(&data).expect("should parse");
+        assert!(parsed.buttons.dpad_down);
+        assert!(!parsed.buttons.dpad_up);
+    }
+
+    #[test]
+    fn parse_simple_hid_report_dpad_left() {
+        let data = build_0x3f(0, 0, 6);
+        let parsed = parse_simple_hid_report(&data).expect("should parse");
+        assert!(parsed.buttons.dpad_left);
+        assert!(!parsed.buttons.dpad_right);
+    }
+
+    #[test]
+    fn parse_simple_hid_report_dpad_neutral() {
+        let data = build_0x3f(0, 0, 8);
+        let parsed = parse_simple_hid_report(&data).expect("should parse");
+        assert!(!parsed.buttons.dpad_up);
+        assert!(!parsed.buttons.dpad_down);
+        assert!(!parsed.buttons.dpad_left);
+        assert!(!parsed.buttons.dpad_right);
+    }
+
+    #[test]
+    fn parse_simple_hid_report_dpad_diagonal_up_right() {
+        let data = build_0x3f(0, 0, 1);
+        let parsed = parse_simple_hid_report(&data).expect("should parse");
+        assert!(parsed.buttons.dpad_up);
+        assert!(parsed.buttons.dpad_right);
+        assert!(!parsed.buttons.dpad_down);
+        assert!(!parsed.buttons.dpad_left);
+    }
+
+    #[test]
+    fn parse_simple_hid_report_dpad_diagonal_down_left() {
+        let data = build_0x3f(0, 0, 5);
+        let parsed = parse_simple_hid_report(&data).expect("should parse");
+        assert!(parsed.buttons.dpad_down);
+        assert!(parsed.buttons.dpad_left);
+        assert!(!parsed.buttons.dpad_up);
+        assert!(!parsed.buttons.dpad_right);
+    }
+
+    #[test]
+    fn parse_simple_hid_report_all_face_buttons() {
+        let data = build_0x3f(0x0F, 0, 8);
+        let parsed = parse_simple_hid_report(&data).expect("should parse");
+        assert!(parsed.buttons.a);
+        assert!(parsed.buttons.b);
+        assert!(parsed.buttons.x);
+        assert!(parsed.buttons.y);
+    }
+
+    #[test]
+    fn parse_simple_hid_report_shoulder_buttons() {
+        let data = build_0x3f(0xF0, 0, 8);
+        let parsed = parse_simple_hid_report(&data).expect("should parse");
+        assert!(parsed.buttons.l);
+        assert!(parsed.buttons.r);
+        assert!(parsed.buttons.zl);
+        assert!(parsed.buttons.zr);
+    }
+
+    #[test]
+    fn parse_simple_hid_report_shared_buttons() {
+        let data = build_0x3f(0, 0x3F, 8);
+        let parsed = parse_simple_hid_report(&data).expect("should parse");
+        assert!(parsed.buttons.minus);
+        assert!(parsed.buttons.plus);
+        assert!(parsed.buttons.home);
+        assert!(parsed.buttons.capture);
+        assert!(parsed.buttons.stick_l);
+        assert!(parsed.buttons.stick_r);
+    }
+
+    #[test]
+    fn parse_simple_hid_report_sr_sl_always_false() {
+        let data = build_0x3f(0xFF, 0xFF, 8);
+        let parsed = parse_simple_hid_report(&data).expect("should parse");
+        assert!(!parsed.buttons.sr_right);
+        assert!(!parsed.buttons.sl_right);
+        assert!(!parsed.buttons.sr_left);
+        assert!(!parsed.buttons.sl_left);
+    }
+
+    #[test]
+    fn parse_simple_hid_report_stick_center() {
+        let data = build_0x3f(0, 0, 8);
+        let parsed = parse_simple_hid_report(&data).expect("should parse");
+        assert_eq!(parsed.left_stick.raw_x, 0x8000);
+        assert_eq!(parsed.left_stick.raw_y, 0x8000);
+        assert!((parsed.left_stick.x - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn parse_simple_hid_report_no_imu() {
+        let data = build_0x3f(0, 0, 8);
+        let parsed = parse_simple_hid_report(&data).expect("should parse");
+        assert!(parsed.imu.is_none());
+    }
+
+    #[test]
+    fn parse_simple_hid_report_vibrator_zero() {
+        let data = build_0x3f(0, 0, 8);
+        let parsed = parse_simple_hid_report(&data).expect("should parse");
+        assert_eq!(parsed.vibrator, 0);
+    }
+
+    // --- normalize_stick_16 -----------------------------------------------
+
+    #[test]
+    fn normalize_stick_16_center() {
+        assert!((normalize_stick_16(0x8000, 0x8000) - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn normalize_stick_16_max() {
+        assert!((normalize_stick_16(0xFFFF, 0x8000) - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn normalize_stick_16_min() {
+        assert!((normalize_stick_16(0x0000, 0x8000) - (-1.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn normalize_stick_16_midpoint_positive() {
+        let raw = 0xC000u16;
+        let result = normalize_stick_16(raw, 0x8000);
+        assert!(result > 0.0 && result < 1.0);
+    }
+
+    #[test]
+    fn normalize_stick_16_midpoint_negative() {
+        let raw = 0x4000u16;
+        let result = normalize_stick_16(raw, 0x8000);
+        assert!(result < 0.0 && result > -1.0);
+    }
+
+    // --- parse_simple_stick -----------------------------------------------
+
+    #[test]
+    fn parse_simple_stick_short_data() {
+        let result = parse_simple_stick(&[0x80, 0x00]);
+        assert_eq!(result, StickState::default());
+    }
+
+    #[test]
+    fn parse_simple_stick_center() {
+        let data = [0x80, 0x00, 0x80, 0x00];
+        let result = parse_simple_stick(&data);
+        assert_eq!(result.raw_x, 0x8000);
+        assert_eq!(result.raw_y, 0x8000);
+        assert!((result.x - 0.0).abs() < f32::EPSILON);
+        assert!((result.y - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn parse_simple_stick_max() {
+        let data = [0xFF, 0xFF, 0xFF, 0xFF];
+        let result = parse_simple_stick(&data);
+        assert_eq!(result.raw_x, 0xFFFF);
+        assert_eq!(result.raw_y, 0xFFFF);
+        assert!((result.x - 1.0).abs() < 0.001);
+        assert!((result.y - 1.0).abs() < 0.001);
+    }
+
+    // --- constants --------------------------------------------------------
+
+    #[test]
+    fn stick_constants_values() {
+        assert_eq!(STICK_CENTER, 0x800);
+        assert_eq!(STICK_MAX, 0xFFF);
+        assert_eq!(STICK_MIN, 0x000);
+        assert!(STICK_MIN < STICK_CENTER);
+        assert!(STICK_CENTER < STICK_MAX);
+    }
+
+    #[test]
+    fn report_id_constants() {
+        assert_eq!(REPORT_ID_STANDARD, 0x30);
+        assert_eq!(REPORT_ID_SUBCMD_REPLY, 0x21);
+        assert_eq!(REPORT_ID_NFC_IR, 0x31);
+        assert_eq!(REPORT_ID_DEFAULT_BT, 0x3F);
+        assert_eq!(REPORT_ID_USB_REPLY, 0x81);
+    }
+
+    #[test]
+    fn vid_pid_constants() {
+        assert_eq!(NINTENDO_VID, 0x057E);
+        assert_eq!(PRO_CONTROLLER_PID, 0x2009);
+    }
+
+    // --- serde roundtrips -------------------------------------------------
+
+    #[test]
+    fn imu_frame_serde_roundtrip() {
+        let frame = ImuFrame {
+            accel_x: 100,
+            accel_y: -200,
+            accel_z: 300,
+            gyro_x: -400,
+            gyro_y: 500,
+            gyro_z: -600,
+        };
+        let json = serde_json::to_string(&frame).expect("serialize");
+        let deserialized: ImuFrame = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(frame, deserialized);
+    }
+
+    #[test]
+    fn imu_data_serde_roundtrip() {
+        let data = ImuData {
+            frames: [
+                ImuFrame {
+                    accel_x: 1,
+                    accel_y: 2,
+                    accel_z: 3,
+                    gyro_x: 4,
+                    gyro_y: 5,
+                    gyro_z: 6,
+                },
+                ImuFrame::default(),
+                ImuFrame {
+                    accel_x: -1,
+                    accel_y: -2,
+                    accel_z: -3,
+                    gyro_x: -4,
+                    gyro_y: -5,
+                    gyro_z: -6,
+                },
+            ],
+        };
+        let json = serde_json::to_string(&data).expect("serialize");
+        let deserialized: ImuData = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(data, deserialized);
+    }
+
+    #[test]
+    fn imu_frame_serde_uses_snake_case() {
+        let frame = ImuFrame {
+            accel_x: 1,
+            accel_y: 0,
+            accel_z: 0,
+            gyro_x: 0,
+            gyro_y: 0,
+            gyro_z: 0,
+        };
+        let json = serde_json::to_string(&frame).expect("serialize");
+        assert!(json.contains("accel_x"));
+        assert!(!json.contains("accelX"));
+    }
+
+    #[test]
+    fn battery_info_equality() {
+        let a = BatteryInfo {
+            raw: 4,
+            charging: false,
+            connection_type: 1,
+        };
+        let b = BatteryInfo {
+            raw: 4,
+            charging: false,
+            connection_type: 1,
+        };
+        assert_eq!(a, b);
+        let c = BatteryInfo {
+            raw: 5,
+            charging: false,
+            connection_type: 1,
+        };
+        assert_ne!(a, c);
+    }
+}
+
+#[cfg(test)]
 mod nfc_tests {
     use super::*;
 

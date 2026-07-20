@@ -300,4 +300,394 @@ mod tests {
         assert!(out.get(ButtonId::A));
         assert!(out.get(ButtonId::L));
     }
+
+    // --- Engine defaults ----------------------------------------------------
+
+    #[test]
+    fn new_engine_has_default_interval_and_duty() {
+        let engine = TurboEngine::new();
+        // Defaults are 100 ms / 0.5 duty. We verify behaviour indirectly by
+        // driving a turbo with interval_ms == 0 (which falls back to global).
+        let mut e = engine;
+        let mut buttons = ButtonState::default();
+        buttons.set(ButtonId::A, true);
+        let mappings = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![Action::Turbo {
+                    button: ButtonId::B,
+                    interval_ms: 0, // use global
+                }],
+            }],
+            ..Default::default()
+        };
+
+        // First frame: target pressed.
+        let out = e.update(&buttons, 0.0, &mappings);
+        assert!(out.get(ButtonId::B));
+
+        // 60 ms later with 50 ms on-phase (global 100ms / 0.5 duty) -> off.
+        let out = e.update(&buttons, 0.060, &mappings);
+        assert!(!out.get(ButtonId::B));
+    }
+
+    // --- set_global clamping ------------------------------------------------
+
+    #[test]
+    fn set_global_clamps_interval_to_minimum_one() {
+        let mut engine = TurboEngine::new();
+        engine.set_global(0, 0.5);
+        // interval is clamped to 1 ms internally; drive a turbo with global
+        // fallback to confirm it still oscillates rather than dividing by zero.
+        let mut buttons = ButtonState::default();
+        buttons.set(ButtonId::A, true);
+        let mappings = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![Action::Turbo {
+                    button: ButtonId::B,
+                    interval_ms: 0,
+                }],
+            }],
+            ..Default::default()
+        };
+        let out = engine.update(&buttons, 0.0, &mappings);
+        assert!(out.get(ButtonId::B));
+        // A large dt should flip it off (on-phase = 1ms * 0.5 = 0.5ms).
+        let out = engine.update(&buttons, 1.0, &mappings);
+        assert!(!out.get(ButtonId::B));
+    }
+
+    #[test]
+    fn set_global_clamps_duty_cycle_to_zero_and_one() {
+        let mut buttons = ButtonState::default();
+        buttons.set(ButtonId::A, true);
+        let mappings = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![Action::Turbo {
+                    button: ButtonId::B,
+                    interval_ms: 0,
+                }],
+            }],
+            ..Default::default()
+        };
+
+        // duty clamped to 0 -> on-phase is 0 ms, so any dt flips to off.
+        let mut engine = TurboEngine::new();
+        engine.set_global(100, -1.0);
+        let out = engine.update(&buttons, 0.0, &mappings);
+        assert!(out.get(ButtonId::B));
+        let out = engine.update(&buttons, 0.001, &mappings);
+        assert!(!out.get(ButtonId::B), "zero duty should turn off quickly");
+
+        // Now duty clamped to 1.0 -> on-phase is the full interval (100 ms),
+        // off-phase is 0 ms. The button stays on for 100 ms then flips off and
+        // immediately back on over consecutive frames.
+        let mut engine2 = TurboEngine::new();
+        engine2.set_global(100, 2.0);
+        let out = engine2.update(&buttons, 0.0, &mappings);
+        assert!(out.get(ButtonId::B));
+        // Small dt: still within the 100 ms on-phase.
+        let out = engine2.update(&buttons, 0.001, &mappings);
+        assert!(out.get(ButtonId::B));
+        // Cross the 100 ms on-phase -> flips off.
+        let out = engine2.update(&buttons, 0.110, &mappings);
+        assert!(!out.get(ButtonId::B));
+        // Any further dt: off-phase is 0 ms, so it flips back on immediately.
+        let out = engine2.update(&buttons, 0.001, &mappings);
+        assert!(out.get(ButtonId::B));
+    }
+
+    // --- Duty cycle logic ---------------------------------------------------
+
+    #[test]
+    fn custom_duty_cycle_extends_on_phase() {
+        let mut engine = TurboEngine::new();
+        engine.set_global(100, 0.75); // 75 ms on / 25 ms off
+        let mut buttons = ButtonState::default();
+        buttons.set(ButtonId::A, true);
+        let mappings = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![Action::Turbo {
+                    button: ButtonId::B,
+                    interval_ms: 0, // use global
+                }],
+            }],
+            ..Default::default()
+        };
+
+        // First frame: pressed.
+        let out = engine.update(&buttons, 0.0, &mappings);
+        assert!(out.get(ButtonId::B));
+        // 60 ms: still on (on-phase is 75 ms).
+        let out = engine.update(&buttons, 0.060, &mappings);
+        assert!(out.get(ButtonId::B));
+        // 20 ms more (total 80 ms): now past 75 ms on-phase -> off.
+        let out = engine.update(&buttons, 0.020, &mappings);
+        assert!(!out.get(ButtonId::B));
+        // 30 ms more: past 25 ms off-phase -> on.
+        let out = engine.update(&buttons, 0.030, &mappings);
+        assert!(out.get(ButtonId::B));
+    }
+
+    #[test]
+    fn per_mapping_interval_overrides_global() {
+        let mut engine = TurboEngine::new();
+        engine.set_global(1000, 0.5); // global would be 500ms on
+        let mut buttons = ButtonState::default();
+        buttons.set(ButtonId::A, true);
+        let mappings = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![Action::Turbo {
+                    button: ButtonId::B,
+                    interval_ms: 40, // 20 ms on / 20 ms off
+                }],
+            }],
+            ..Default::default()
+        };
+
+        let out = engine.update(&buttons, 0.0, &mappings);
+        assert!(out.get(ButtonId::B));
+        // 25 ms: past 20 ms on-phase -> off (proves per-mapping interval used).
+        let out = engine.update(&buttons, 0.025, &mappings);
+        assert!(!out.get(ButtonId::B));
+    }
+
+    // --- Toggle state machine ----------------------------------------------
+
+    #[test]
+    fn toggle_double_press_in_one_frame_is_no_op() {
+        let mut engine = TurboEngine::new();
+        // Two mappings from the same source to the same toggle target produce
+        // two flips in a single update -> even count -> no net change.
+        let mappings = Mappings {
+            buttons: vec![
+                ButtonMapping {
+                    source: ButtonId::A,
+                    actions: vec![Action::Toggle {
+                        button: ButtonId::B,
+                    }],
+                },
+                ButtonMapping {
+                    source: ButtonId::X,
+                    actions: vec![Action::Toggle {
+                        button: ButtonId::B,
+                    }],
+                },
+            ],
+            ..Default::default()
+        };
+
+        let mut buttons = ButtonState::default();
+        buttons.set(ButtonId::A, true);
+        buttons.set(ButtonId::X, true);
+
+        // Both rise in the same frame -> 2 flips -> B stays off.
+        let out = engine.update(&buttons, 0.0, &mappings);
+        assert!(!out.get(ButtonId::B));
+
+        // Release both.
+        let mut released = ButtonState::default();
+        engine.update(&released, 0.0, &mappings);
+
+        // Now press only A -> 1 flip -> B on.
+        released.set(ButtonId::A, true);
+        let out = engine.update(&released, 0.0, &mappings);
+        assert!(out.get(ButtonId::B));
+    }
+
+    #[test]
+    fn toggle_state_persists_across_releases() {
+        let mut engine = TurboEngine::new();
+        let mappings = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![Action::Toggle {
+                    button: ButtonId::Y,
+                }],
+            }],
+            ..Default::default()
+        };
+
+        let mut buttons = ButtonState::default();
+        // Press -> on.
+        buttons.set(ButtonId::A, true);
+        assert!(engine.update(&buttons, 0.0, &mappings).get(ButtonId::Y));
+        // Hold -> stays on.
+        assert!(engine.update(&buttons, 0.1, &mappings).get(ButtonId::Y));
+        // Release -> stays on.
+        buttons.set(ButtonId::A, false);
+        assert!(engine.update(&buttons, 0.1, &mappings).get(ButtonId::Y));
+        // Press again -> off.
+        buttons.set(ButtonId::A, true);
+        assert!(!engine.update(&buttons, 0.0, &mappings).get(ButtonId::Y));
+        // Press again -> on.
+        buttons.set(ButtonId::A, false);
+        engine.update(&buttons, 0.0, &mappings);
+        buttons.set(ButtonId::A, true);
+        assert!(engine.update(&buttons, 0.0, &mappings).get(ButtonId::Y));
+    }
+
+    // --- Stale state cleanup -----------------------------------------------
+
+    #[test]
+    fn removing_mapping_clears_turbo_state() {
+        let mut engine = TurboEngine::new();
+        let mut buttons = ButtonState::default();
+        buttons.set(ButtonId::A, true);
+
+        let with_mapping = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![Action::Turbo {
+                    button: ButtonId::B,
+                    interval_ms: 100,
+                }],
+            }],
+            ..Default::default()
+        };
+        // Prime the turbo state.
+        engine.update(&buttons, 0.0, &with_mapping);
+
+        // Remove the mapping entirely.
+        let empty = Mappings::default();
+        let out = engine.update(&buttons, 0.0, &empty);
+        // Target is no longer overridden; B defaults to false (not held).
+        assert!(!out.get(ButtonId::B));
+        // Source still passes through.
+        assert!(out.get(ButtonId::A));
+    }
+
+    #[test]
+    fn removing_mapping_clears_toggle_state() {
+        let mut engine = TurboEngine::new();
+        let mappings = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![Action::Toggle {
+                    button: ButtonId::B,
+                }],
+            }],
+            ..Default::default()
+        };
+        let mut buttons = ButtonState::default();
+        buttons.set(ButtonId::A, true);
+        // Toggle B on.
+        engine.update(&buttons, 0.0, &mappings);
+
+        // Remove mapping; B should revert to its physical (false) state.
+        let empty = Mappings::default();
+        buttons.set(ButtonId::A, false);
+        let out = engine.update(&buttons, 0.0, &empty);
+        assert!(!out.get(ButtonId::B));
+    }
+
+    // --- Multiple sources / targets ----------------------------------------
+
+    #[test]
+    fn multiple_sources_feed_same_turbo_target() {
+        let mut engine = TurboEngine::new();
+        let mappings = Mappings {
+            buttons: vec![
+                ButtonMapping {
+                    source: ButtonId::A,
+                    actions: vec![Action::Turbo {
+                        button: ButtonId::B,
+                        interval_ms: 100,
+                    }],
+                },
+                ButtonMapping {
+                    source: ButtonId::X,
+                    actions: vec![Action::Turbo {
+                        button: ButtonId::B,
+                        interval_ms: 100,
+                    }],
+                },
+            ],
+            ..Default::default()
+        };
+
+        // Hold only A: turbo starts.
+        let mut buttons = ButtonState::default();
+        buttons.set(ButtonId::A, true);
+        assert!(engine.update(&buttons, 0.0, &mappings).get(ButtonId::B));
+
+        // Release A but hold X: target should stay held (any_held true).
+        let mut buttons2 = ButtonState::default();
+        buttons2.set(ButtonId::X, true);
+        // First frame after switch: X rising, A falling. Turbo stays on.
+        let out = engine.update(&buttons2, 0.0, &mappings);
+        assert!(out.get(ButtonId::B));
+
+        // Release everything: target resets to off.
+        let released = ButtonState::default();
+        let out = engine.update(&released, 0.0, &mappings);
+        assert!(!out.get(ButtonId::B));
+    }
+
+    #[test]
+    fn non_turbo_actions_are_ignored_by_engine() {
+        let mut engine = TurboEngine::new();
+        let mappings = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![
+                    Action::Button(ButtonId::B),
+                    Action::Key("Space".to_string()),
+                    Action::ProfileNext,
+                ],
+            }],
+            ..Default::default()
+        };
+        let mut buttons = ButtonState::default();
+        buttons.set(ButtonId::A, true);
+        // No turbo/toggle actions -> B passes through its physical state (false).
+        let out = engine.update(&buttons, 0.0, &mappings);
+        assert!(out.get(ButtonId::A));
+        assert!(!out.get(ButtonId::B));
+    }
+
+    #[test]
+    fn empty_mappings_passes_through() {
+        let mut engine = TurboEngine::new();
+        let mut buttons = ButtonState::default();
+        buttons.set(ButtonId::A, true);
+        buttons.set(ButtonId::B, true);
+        let out = engine.update(&buttons, 0.016, &Mappings::default());
+        assert!(out.get(ButtonId::A));
+        assert!(out.get(ButtonId::B));
+    }
+
+    #[test]
+    fn turbo_resets_after_release_and_repress() {
+        let mut engine = TurboEngine::new();
+        let mappings = Mappings {
+            buttons: vec![ButtonMapping {
+                source: ButtonId::A,
+                actions: vec![Action::Turbo {
+                    button: ButtonId::B,
+                    interval_ms: 100,
+                }],
+            }],
+            ..Default::default()
+        };
+
+        let mut buttons = ButtonState::default();
+        buttons.set(ButtonId::A, true);
+        // Press -> on.
+        assert!(engine.update(&buttons, 0.0, &mappings).get(ButtonId::B));
+        // 60 ms -> off.
+        assert!(!engine.update(&buttons, 0.060, &mappings).get(ButtonId::B));
+
+        // Release -> resets.
+        buttons.set(ButtonId::A, false);
+        engine.update(&buttons, 0.0, &mappings);
+
+        // Repress -> on again (fresh start).
+        buttons.set(ButtonId::A, true);
+        assert!(engine.update(&buttons, 0.0, &mappings).get(ButtonId::B));
+    }
 }

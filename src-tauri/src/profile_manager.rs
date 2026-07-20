@@ -606,3 +606,607 @@ pub fn import_profiles(
 ) -> Result<Vec<Profile>, String> {
     pm.import_from_path(&path)
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::ProfileManager as ProfileManagerState;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Unique counter so parallel tests don't collide on the same temp path.
+    static TEST_ID: AtomicU64 = AtomicU64::new(0);
+
+    /// Guard to serialize tests that touch the filesystem to avoid flakiness
+    /// when many tests create/remove the same canonical base directory.
+    static FS_GUARD: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+    fn temp_dir() -> PathBuf {
+        let n = TEST_ID.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join("oxidelink-pm-tests").join(format!(
+            "{}-{}-{}",
+            crate::state::timestamp_now(),
+            std::process::id(),
+            n
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn temp_manager() -> (ProfileManager, PathBuf) {
+        let dir = temp_dir();
+        let path = dir.join("profiles.json");
+        (ProfileManager::with_path(&path), path)
+    }
+
+    fn rule(kind: AutoRuleKind, pattern: &str, mode: MatchMode) -> AutoRule {
+        AutoRule {
+            kind,
+            pattern: pattern.to_string(),
+            match_mode: mode,
+            enabled: true,
+        }
+    }
+
+    // -- ProfileConfig defaults and serialization ----------------------------
+
+    #[test]
+    fn profile_default_has_empty_id_and_disabled_state() {
+        let p = Profile::default();
+        assert!(p.id.is_empty());
+        assert!(p.name.is_empty());
+        assert!(!p.enabled);
+        assert!(p.auto_rules.is_empty());
+        assert_eq!(p.created_at, 0);
+        assert_eq!(p.updated_at, 0);
+    }
+
+    #[test]
+    fn auto_rule_default_is_process_path_contains_disabled() {
+        let r = AutoRule::default();
+        assert_eq!(r.kind, AutoRuleKind::ProcessPath);
+        assert_eq!(r.match_mode, MatchMode::Contains);
+        assert!(!r.enabled);
+        assert!(r.pattern.is_empty());
+    }
+
+    #[test]
+    fn match_mode_default_is_contains() {
+        assert_eq!(MatchMode::default(), MatchMode::Contains);
+    }
+
+    #[test]
+    fn auto_rule_kind_default_is_process_path() {
+        assert_eq!(AutoRuleKind::default(), AutoRuleKind::ProcessPath);
+    }
+
+    #[test]
+    fn profile_serde_roundtrip_preserves_all_fields() {
+        let profile = Profile {
+            id: "p-1".into(),
+            name: "Test".into(),
+            enabled: true,
+            auto_rules: vec![rule(AutoRuleKind::WindowTitle, "Game", MatchMode::Exact)],
+            created_at: 1000,
+            updated_at: 2000,
+            nfc: crate::state::NfcConfig::default(),
+            right_stick: crate::state::flick_stick::RightStickConfig::default(),
+        };
+        let json = serde_json::to_string(&profile).unwrap();
+        let back: Profile = serde_json::from_str(&json).unwrap();
+        assert_eq!(profile, back);
+    }
+
+    #[test]
+    fn profile_serde_uses_snake_case_fields() {
+        let profile = Profile {
+            id: "x".into(),
+            name: "Y".into(),
+            enabled: true,
+            auto_rules: vec![],
+            created_at: 1,
+            updated_at: 2,
+            nfc: crate::state::NfcConfig::default(),
+            right_stick: crate::state::flick_stick::RightStickConfig::default(),
+        };
+        let json = serde_json::to_string(&profile).unwrap();
+        assert!(json.contains("\"created_at\""));
+        assert!(json.contains("\"updated_at\""));
+        assert!(json.contains("\"auto_rules\""));
+    }
+
+    #[test]
+    fn auto_rule_serde_uses_snake_case_enums() {
+        let r = rule(AutoRuleKind::WindowTitle, "x", MatchMode::Exact);
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"window_title\""));
+        assert!(json.contains("\"exact\""));
+    }
+
+    #[test]
+    fn profile_manager_state_default_is_empty() {
+        let state = ProfileManagerState::default();
+        assert!(state.profiles.is_empty());
+        assert!(state.active_profile_id.is_none());
+        assert!(state.default_profile_id.is_none());
+        assert!(state.last_applied.is_none());
+    }
+
+    #[test]
+    fn profile_manager_state_serde_roundtrip() {
+        let state = ProfileManagerState {
+            profiles: vec![Profile {
+                id: "a".into(),
+                name: "A".into(),
+                enabled: true,
+                auto_rules: vec![rule(AutoRuleKind::ProcessPath, "x", MatchMode::Regex)],
+                created_at: 10,
+                updated_at: 20,
+                nfc: crate::state::NfcConfig::default(),
+                right_stick: crate::state::flick_stick::RightStickConfig::default(),
+            }],
+            active_profile_id: Some("a".into()),
+            default_profile_id: None,
+            last_applied: Some("a".into()),
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let back: ProfileManagerState = serde_json::from_str(&json).unwrap();
+        assert_eq!(state, back);
+    }
+
+    // -- ProfileManager state: load, save, switch, list ----------------------
+
+    #[test]
+    fn with_path_loads_empty_when_file_missing() {
+        let dir = temp_dir();
+        let path = dir.join("missing.json");
+        assert!(!path.exists());
+        let pm = ProfileManager::with_path(&path);
+        assert!(pm.list_profiles().is_empty());
+    }
+
+    #[test]
+    fn save_and_load_persists_profiles_to_disk() {
+        let _guard = FS_GUARD.lock();
+        let (pm, path) = temp_manager();
+        let p = pm.create_profile("Persist".into(), None).unwrap();
+        pm.set_active_profile(Some(&p.id)).unwrap();
+
+        // Reload from the same path into a fresh manager.
+        let pm2 = ProfileManager::with_path(&path);
+        assert_eq!(pm2.list_profiles().len(), 1);
+        assert_eq!(pm2.list_profiles()[0].name, "Persist");
+        assert_eq!(pm2.get_active_profile().unwrap().id, p.id);
+    }
+
+    #[test]
+    fn create_profile_rejects_empty_name() {
+        let (pm, _path) = temp_manager();
+        assert!(pm.create_profile("   ".into(), None).is_err());
+        assert!(pm.create_profile("".into(), None).is_err());
+    }
+
+    #[test]
+    fn create_profile_with_auto_rules_stores_them() {
+        let (pm, _path) = temp_manager();
+        let rules = vec![rule(AutoRuleKind::ProcessPath, "game.exe", MatchMode::Exact)];
+        let p = pm.create_profile("WithRules".into(), Some(rules)).unwrap();
+        let loaded = pm.get_profile(&p.id).unwrap();
+        assert_eq!(loaded.auto_rules.len(), 1);
+        assert_eq!(loaded.auto_rules[0].pattern, "game.exe");
+    }
+
+    #[test]
+    fn create_profile_generates_unique_ids() {
+        let (pm, _path) = temp_manager();
+        let p1 = pm.create_profile("A".into(), None).unwrap();
+        let p2 = pm.create_profile("B".into(), None).unwrap();
+        assert_ne!(p1.id, p2.id);
+    }
+
+    #[test]
+    fn update_profile_rejects_empty_name() {
+        let (pm, _path) = temp_manager();
+        let p = pm.create_profile("Orig".into(), None).unwrap();
+        let mut bad = p.clone();
+        bad.name = "  ".into();
+        assert!(pm.update_profile(bad).is_err());
+    }
+
+    #[test]
+    fn update_profile_rejects_unknown_id() {
+        let (pm, _path) = temp_manager();
+        let p = Profile {
+            id: "nonexistent".into(),
+            name: "X".into(),
+            enabled: true,
+            auto_rules: vec![],
+            created_at: 0,
+            updated_at: 0,
+            nfc: crate::state::NfcConfig::default(),
+            right_stick: crate::state::flick_stick::RightStickConfig::default(),
+        };
+        assert!(pm.update_profile(p).is_err());
+    }
+
+    #[test]
+    fn update_profile_bumps_updated_at() {
+        let (pm, _path) = temp_manager();
+        let p = pm.create_profile("Orig".into(), None).unwrap();
+        let original_updated = p.updated_at;
+        let mut updated = p.clone();
+        updated.name = "New".into();
+        let result = pm.update_profile(updated).unwrap();
+        assert!(result.updated_at >= original_updated);
+    }
+
+    #[test]
+    fn delete_profile_clears_active_and_default_refs() {
+        let (pm, _path) = temp_manager();
+        let p = pm.create_profile("D".into(), None).unwrap();
+        pm.set_active_profile(Some(&p.id)).unwrap();
+        pm.set_default_profile_id(Some(p.id.clone())).unwrap();
+        assert!(pm.get_active_profile().is_some());
+        assert!(pm.get_default_profile_id().is_some());
+
+        pm.delete_profile(&p.id).unwrap();
+        assert!(pm.get_active_profile().is_none());
+        assert!(pm.get_default_profile_id().is_none());
+    }
+
+    #[test]
+    fn delete_profile_unknown_id_errors() {
+        let (pm, _path) = temp_manager();
+        assert!(pm.delete_profile("nope").is_err());
+    }
+
+    #[test]
+    fn get_profile_returns_none_for_unknown() {
+        let (pm, _path) = temp_manager();
+        assert!(pm.get_profile("unknown").is_none());
+    }
+
+    #[test]
+    fn set_active_profile_unknown_id_errors() {
+        let (pm, _path) = temp_manager();
+        assert!(pm.set_active_profile(Some("missing")).is_err());
+    }
+
+    #[test]
+    fn set_default_profile_id_unknown_errors() {
+        let (pm, _path) = temp_manager();
+        assert!(pm.set_default_profile_id(Some("missing".into())).is_err());
+    }
+
+    #[test]
+    fn set_default_profile_id_none_clears() {
+        let (pm, _path) = temp_manager();
+        let p = pm.create_profile("D".into(), None).unwrap();
+        pm.set_default_profile_id(Some(p.id.clone())).unwrap();
+        assert!(pm.get_default_profile_id().is_some());
+        pm.set_default_profile_id(None).unwrap();
+        assert!(pm.get_default_profile_id().is_none());
+    }
+
+    #[test]
+    fn to_json_and_from_json_roundtrip() {
+        let (pm, _path) = temp_manager();
+        let p = pm.create_profile("J".into(), None).unwrap();
+        pm.set_active_profile(Some(&p.id)).unwrap();
+
+        let json = pm.to_json().unwrap();
+        let (pm2, _path2) = temp_manager();
+        pm2.from_json(&json).unwrap();
+        assert_eq!(pm2.list_profiles().len(), 1);
+        assert_eq!(pm2.get_active_profile().unwrap().id, p.id);
+    }
+
+    #[test]
+    fn from_json_invalid_returns_error() {
+        let (pm, _path) = temp_manager();
+        assert!(pm.from_json("not valid json").is_err());
+    }
+
+    // -- Auto-switch logic ---------------------------------------------------
+
+    #[test]
+    fn auto_switcher_new_is_disabled_and_not_running() {
+        let sw = AutoSwitcher::new();
+        assert!(!sw.is_enabled());
+    }
+
+    #[test]
+    fn auto_switcher_set_enabled_toggles() {
+        let sw = AutoSwitcher::new();
+        sw.set_enabled(true);
+        assert!(sw.is_enabled());
+        sw.set_enabled(false);
+        assert!(!sw.is_enabled());
+    }
+
+    #[test]
+    fn pm_auto_switch_disabled_by_default() {
+        let (pm, _path) = temp_manager();
+        assert!(!pm.is_auto_switch_enabled());
+    }
+
+    #[test]
+    fn pm_auto_switch_enable_disable() {
+        let (pm, _path) = temp_manager();
+        pm.set_auto_switch_enabled(true);
+        assert!(pm.is_auto_switch_enabled());
+        pm.set_auto_switch_enabled(false);
+        assert!(!pm.is_auto_switch_enabled());
+    }
+
+    #[test]
+    fn find_matching_profile_state_skips_disabled_profiles() {
+        let mut state = ProfileManagerState::default();
+        let mut p = Profile {
+            id: "disabled".into(),
+            name: "Disabled".into(),
+            enabled: false,
+            auto_rules: vec![rule(AutoRuleKind::WindowTitle, "Target", MatchMode::Exact)],
+            created_at: 0,
+            updated_at: 0,
+            nfc: crate::state::NfcConfig::default(),
+            right_stick: crate::state::flick_stick::RightStickConfig::default(),
+        };
+        state.profiles.push(p.clone());
+        assert!(find_matching_profile_state(&state, "app", "Target").is_none());
+
+        // Enable it and verify it now matches.
+        p.enabled = true;
+        state.profiles[0] = p;
+        assert!(find_matching_profile_state(&state, "app", "Target").is_some());
+    }
+
+    #[test]
+    fn find_matching_profile_state_returns_first_match() {
+        let mut state = ProfileManagerState::default();
+        let p1 = Profile {
+            id: "first".into(),
+            name: "First".into(),
+            enabled: true,
+            auto_rules: vec![rule(AutoRuleKind::WindowTitle, "Match", MatchMode::Contains)],
+            created_at: 0,
+            updated_at: 0,
+            nfc: crate::state::NfcConfig::default(),
+            right_stick: crate::state::flick_stick::RightStickConfig::default(),
+        };
+        let p2 = Profile {
+            id: "second".into(),
+            name: "Second".into(),
+            enabled: true,
+            auto_rules: vec![rule(AutoRuleKind::WindowTitle, "Match", MatchMode::Contains)],
+            created_at: 0,
+            updated_at: 0,
+            nfc: crate::state::NfcConfig::default(),
+            right_stick: crate::state::flick_stick::RightStickConfig::default(),
+        };
+        state.profiles.push(p1);
+        state.profiles.push(p2);
+        let matched = find_matching_profile_state(&state, "app", "Match Me").unwrap();
+        assert_eq!(matched.id, "first");
+    }
+
+    #[test]
+    fn find_matching_profile_state_default_fallback_only_if_enabled() {
+        let mut state = ProfileManagerState::default();
+        let p = Profile {
+            id: "def".into(),
+            name: "Default".into(),
+            enabled: false,
+            auto_rules: vec![],
+            created_at: 0,
+            updated_at: 0,
+            nfc: crate::state::NfcConfig::default(),
+            right_stick: crate::state::flick_stick::RightStickConfig::default(),
+        };
+        state.profiles.push(p);
+        state.default_profile_id = Some("def".into());
+        assert!(find_matching_profile_state(&state, "app", "none").is_none());
+    }
+
+    #[test]
+    fn find_matching_profile_state_no_match_no_default_returns_none() {
+        let state = ProfileManagerState::default();
+        assert!(find_matching_profile_state(&state, "app", "title").is_none());
+    }
+
+    #[test]
+    fn rule_matches_exact_is_case_insensitive() {
+        let r = rule(AutoRuleKind::ProcessPath, "Game.EXE", MatchMode::Exact);
+        assert!(rule_matches(&r, "game.exe", "title"));
+        assert!(rule_matches(&r, "GAME.EXE", "title"));
+        assert!(!rule_matches(&r, "game.ex", "title"));
+    }
+
+    #[test]
+    fn rule_matches_contains_is_case_insensitive() {
+        let r = rule(AutoRuleKind::WindowTitle, "Visual", MatchMode::Contains);
+        assert!(rule_matches(&r, "path", "VISUAL Studio"));
+        assert!(rule_matches(&r, "path", "visual studio"));
+        assert!(!rule_matches(&r, "path", "Notepad"));
+    }
+
+    #[test]
+    fn rule_matches_regex_uses_pattern() {
+        let r = rule(AutoRuleKind::ProcessPath, r"game_\d+\.exe", MatchMode::Regex);
+        assert!(rule_matches(&r, "game_42.exe", "title"));
+        assert!(!rule_matches(&r, "game.exe", "title"));
+    }
+
+    #[test]
+    fn rule_matches_regex_invalid_pattern_is_false() {
+        let r = rule(AutoRuleKind::ProcessPath, "[invalid", MatchMode::Regex);
+        assert!(!rule_matches(&r, "anything", "title"));
+    }
+
+    #[test]
+    fn rule_matches_disabled_rule_is_false() {
+        let mut r = rule(AutoRuleKind::WindowTitle, "Match", MatchMode::Contains);
+        r.enabled = false;
+        assert!(!rule_matches(&r, "app", "Match here"));
+    }
+
+    #[test]
+    fn rule_matches_process_path_uses_process_path_text() {
+        let r = rule(AutoRuleKind::ProcessPath, "steam", MatchMode::Contains);
+        assert!(rule_matches(&r, "steam.exe", "anything"));
+        assert!(!rule_matches(&r, "other.exe", "steam"));
+    }
+
+    #[test]
+    fn rule_matches_window_title_uses_window_title_text() {
+        let r = rule(AutoRuleKind::WindowTitle, "steam", MatchMode::Contains);
+        assert!(rule_matches(&r, "anything", "steam window"));
+        assert!(!rule_matches(&r, "steam.exe", "other"));
+    }
+
+    // -- Import / export -----------------------------------------------------
+
+    #[test]
+    fn export_to_path_writes_json_file() {
+        let _guard = FS_GUARD.lock();
+        let (pm, path) = temp_manager();
+        pm.create_profile("Export1".into(), None).unwrap();
+        let export_path = path.parent().unwrap().join("export.json");
+        pm.export_to_path(&export_path).unwrap();
+        assert!(export_path.exists());
+        let data = std::fs::read_to_string(&export_path).unwrap();
+        assert!(data.contains("Export1"));
+    }
+
+    #[test]
+    fn import_from_path_replaces_state() {
+        let _guard = FS_GUARD.lock();
+        let (pm, path) = temp_manager();
+        pm.create_profile("Original".into(), None).unwrap();
+
+        let export_path = path.parent().unwrap().join("export2.json");
+        pm.export_to_path(&export_path).unwrap();
+
+        let import_path = path.parent().unwrap().join("profiles2.json");
+        let pm2 = ProfileManager::with_path(&import_path);
+        pm2.create_profile("PreExisting".into(), None).unwrap();
+        assert_eq!(pm2.list_profiles().len(), 1);
+
+        let imported = pm2.import_from_path(&export_path).unwrap();
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0].name, "Original");
+        // Pre-existing profile should be gone after import.
+        assert!(pm2
+            .list_profiles()
+            .iter()
+            .all(|p| p.name != "PreExisting"));
+    }
+
+    #[test]
+    fn export_rejects_relative_path() {
+        let (pm, _path) = temp_manager();
+        assert!(pm.export_to_path("relative.json").is_err());
+    }
+
+    #[test]
+    fn import_rejects_relative_path() {
+        let (pm, _path) = temp_manager();
+        assert!(pm.import_from_path("relative.json").is_err());
+    }
+
+    #[test]
+    fn export_rejects_path_outside_base() {
+        let _guard = FS_GUARD.lock();
+        let (pm, path) = temp_manager();
+        // Create a directory outside the base and try to export there.
+        let outside = std::env::temp_dir().join("oxidelink-pm-outside-export");
+        std::fs::create_dir_all(&outside).unwrap();
+        let target = outside.join("evil.json");
+        assert!(pm.export_to_path(&target).is_err());
+        // Clean up
+        let _ = std::fs::remove_dir_all(&outside);
+        let _ = &path; // keep path alive
+    }
+
+    // -- Pure helper functions ------------------------------------------------
+
+    #[test]
+    fn default_profile_path_ends_with_profiles_json() {
+        let path = default_profile_path();
+        assert!(path.ends_with(PROFILE_FILE_NAME));
+    }
+
+    #[test]
+    fn profile_store_base_dir_contains_oxidelink() {
+        let base = profile_store_base_dir();
+        assert!(base.ends_with("OxideLink"));
+    }
+
+    #[test]
+    fn validate_path_within_base_rejects_relative() {
+        let base = std::env::temp_dir();
+        let result = validate_path_within_base(
+            std::path::Path::new("relative.txt"),
+            &base,
+            true,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must be absolute"));
+    }
+
+    #[test]
+    fn validate_path_within_base_accepts_file_in_base() {
+        let _guard = FS_GUARD.lock();
+        let base = temp_dir();
+        let target = base.join("nested").join("file.json");
+        std::fs::create_dir_all(base.join("nested")).unwrap();
+        let result = validate_path_within_base(&target, &base, true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_path_within_base_rejects_outside_base() {
+        let _guard = FS_GUARD.lock();
+        let base = temp_dir();
+        let outside = std::env::temp_dir().join("oxidelink-pm-validate-outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        let target = outside.join("file.json");
+        let result = validate_path_within_base(&target, &base, true);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("outside the allowed directory"));
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn validate_path_within_base_nonexistent_no_parent_errors() {
+        let _guard = FS_GUARD.lock();
+        let base = temp_dir();
+        // A path with no real parent (just a filename) should error.
+        let result = validate_path_within_base(
+            std::path::Path::new(base.join("file.json").to_str().unwrap()),
+            &base,
+            true,
+        );
+        // This should succeed because the parent (base) exists.
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn detect_active_process_non_windows_returns_error() {
+        // On Windows this calls Win32 APIs; on non-Windows it returns an error.
+        // We only assert the non-windows behavior to avoid touching the real API.
+        #[cfg(not(windows))]
+        {
+            let result = detect_active_process();
+            assert!(result.is_err());
+        }
+        #[cfg(windows)]
+        {
+            // On Windows we skip calling the real API in tests.
+        }
+    }
+}

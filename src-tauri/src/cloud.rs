@@ -499,4 +499,518 @@ mod tests {
         assert!(validate_cloud_endpoint("https://example.com").is_err());
         assert!(validate_cloud_endpoint("ftp://host").is_err());
     }
+
+    // -----------------------------------------------------------------------
+    // CloudConfig serialization & defaults
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cloud_config_serde_with_api_key_present() {
+        let cfg = CloudConfig {
+            enabled: true,
+            endpoint: "https://cloud.oxidelink.dev".into(),
+            api_key: Some("secret-key-123".into()),
+            username: "ciel".into(),
+            accepted_terms: true,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"api_key\":\"secret-key-123\""));
+        assert!(json.contains("\"enabled\":true"));
+        assert!(json.contains("\"accepted_terms\":true"));
+
+        let decoded: CloudConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(cfg, decoded);
+    }
+
+    #[test]
+    fn cloud_config_serde_with_api_key_absent() {
+        let json = r#"{
+            "enabled": true,
+            "endpoint": "https://cloud.oxidelink.dev",
+            "username": "ciel",
+            "accepted_terms": true
+        }"#;
+        let cfg: CloudConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.api_key.is_none());
+        assert!(cfg.enabled);
+        assert_eq!(cfg.endpoint, "https://cloud.oxidelink.dev");
+    }
+
+    #[test]
+    fn cloud_config_serde_partial_uses_defaults() {
+        // With #[serde(default)], missing fields should fall back to defaults.
+        let json = r#"{"enabled": true}"#;
+        let cfg: CloudConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.enabled);
+        assert!(cfg.endpoint.is_empty());
+        assert!(cfg.api_key.is_none());
+        assert!(cfg.username.is_empty());
+        assert!(!cfg.accepted_terms);
+    }
+
+    #[test]
+    fn cloud_config_serde_empty_object() {
+        let cfg: CloudConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(cfg, CloudConfig::default());
+    }
+
+    #[test]
+    fn cloud_config_clone_preserves_equality() {
+        let cfg = CloudConfig {
+            enabled: true,
+            endpoint: "https://cloud.oxidelink.dev".into(),
+            api_key: Some("key".into()),
+            username: "user".into(),
+            accepted_terms: true,
+        };
+        assert_eq!(cfg, cfg.clone());
+    }
+
+    #[test]
+    fn cloud_config_pretty_json_contains_all_fields() {
+        let cfg = CloudConfig {
+            enabled: false,
+            endpoint: "https://cloud.oxidelink.dev".into(),
+            api_key: None,
+            username: "tester".into(),
+            accepted_terms: false,
+        };
+        let json = serde_json::to_string_pretty(&cfg).unwrap();
+        assert!(json.contains("\"enabled\""));
+        assert!(json.contains("\"endpoint\""));
+        assert!(json.contains("\"api_key\""));
+        assert!(json.contains("\"username\""));
+        assert!(json.contains("\"accepted_terms\""));
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_cloud_endpoint edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn validate_cloud_endpoint_https_with_path_and_port() {
+        assert!(validate_cloud_endpoint("https://cloud.oxidelink.dev:8443/api/v1").is_ok());
+        assert!(validate_cloud_endpoint("https://api.oxidelink.dev/v2/profiles").is_ok());
+    }
+
+    #[test]
+    fn validate_cloud_endpoint_rejects_empty_host() {
+        // "https://" with no host should fail.
+        assert!(validate_cloud_endpoint("https://").is_err());
+        assert!(validate_cloud_endpoint("https:///path").is_err());
+    }
+
+    #[test]
+    fn validate_cloud_endpoint_rejects_no_scheme() {
+        assert!(validate_cloud_endpoint("cloud.oxidelink.dev").is_err());
+        assert!(validate_cloud_endpoint("just-a-host").is_err());
+    }
+
+    #[test]
+    fn validate_cloud_endpoint_case_insensitive_scheme_check() {
+        // Uppercase HTTPS should still be accepted (lowercased before check).
+        assert!(validate_cloud_endpoint("HTTPS://cloud.oxidelink.dev").is_ok());
+        // Mixed-case HTTP should be rejected.
+        assert!(validate_cloud_endpoint("HTTP://cloud.oxidelink.dev").is_err());
+    }
+
+    #[test]
+    fn validate_cloud_endpoint_rejects_ftp_and_other_schemes() {
+        assert!(validate_cloud_endpoint("ftp://cloud.oxidelink.dev").is_err());
+        assert!(validate_cloud_endpoint("ws://cloud.oxidelink.dev").is_err());
+        assert!(validate_cloud_endpoint("file:///path").is_err());
+    }
+
+    #[test]
+    fn validate_cloud_endpoint_rejects_example_subdomain() {
+        assert!(validate_cloud_endpoint("https://my.example.org").is_err());
+        assert!(validate_cloud_endpoint("https://sub.example.com").is_err());
+    }
+
+    #[test]
+    fn validate_cloud_endpoint_accepts_localhost_variants() {
+        assert!(validate_cloud_endpoint("https://localhost").is_ok());
+        assert!(validate_cloud_endpoint("https://localhost:3000").is_ok());
+        assert!(validate_cloud_endpoint("https://127.0.0.1:8080").is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // encode_u64 pure helper
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn encode_u64_zero_returns_first_alphabet_char() {
+        let result = encode_u64(0);
+        assert_eq!(result, "A");
+    }
+
+    #[test]
+    fn encode_u64_one_returns_b() {
+        // 1 & 0x3F = 1 -> alphabet[1] = 'B'
+        let result = encode_u64(1);
+        assert_eq!(result, "B");
+    }
+
+    #[test]
+    fn encode_u64_63_returns_last_char() {
+        // 63 & 0x3F = 63 -> alphabet[63] = last char '_'
+        let result = encode_u64(63);
+        assert_eq!(result, "_");
+    }
+
+    #[test]
+    fn encode_u64_64_returns_two_chars() {
+        // 64 = 1*64 + 0 -> push alphabet[0]='A', then alphabet[1]='B', reversed -> "BA"
+        let result = encode_u64(64);
+        assert_eq!(result, "BA");
+    }
+
+    #[test]
+    fn encode_u64_output_only_contains_alphabet_chars() {
+        let allowed: std::collections::HashSet<char> =
+            SHARE_CODE_ALPHABET.iter().map(|&b| b as char).collect();
+        for n in [0u64, 1, 63, 64, 4096, 1_000_000, u64::MAX / 2, u64::MAX] {
+            let encoded = encode_u64(n);
+            assert!(
+                encoded.chars().all(|c| allowed.contains(&c)),
+                "encode_u64({}) = '{}' contains invalid char",
+                n,
+                encoded
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // generate_share_code (guarded by mutex to avoid static counter races)
+    // -----------------------------------------------------------------------
+
+    static SHARE_CODE_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn generate_share_code_is_non_empty() {
+        let _guard = SHARE_CODE_GUARD.lock().unwrap();
+        let code = generate_share_code();
+        assert!(!code.is_empty());
+    }
+
+    #[test]
+    fn generate_share_code_uses_alphabet_only() {
+        let _guard = SHARE_CODE_GUARD.lock().unwrap();
+        let allowed: std::collections::HashSet<char> =
+            SHARE_CODE_ALPHABET.iter().map(|&b| b as char).collect();
+        for _ in 0..50 {
+            let code = generate_share_code();
+            assert!(
+                code.chars().all(|c| allowed.contains(&c)),
+                "code '{}' contains invalid char",
+                code
+            );
+        }
+    }
+
+    #[test]
+    fn generate_share_code_consecutive_calls_differ() {
+        let _guard = SHARE_CODE_GUARD.lock().unwrap();
+        let c1 = generate_share_code();
+        let c2 = generate_share_code();
+        // The counter increments so the encoded value should differ.
+        assert_ne!(c1, c2);
+    }
+
+    // -----------------------------------------------------------------------
+    // cloud_endpoint helper
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cloud_endpoint_trims_single_trailing_slash() {
+        let cfg = CloudConfig {
+            endpoint: "https://localhost:9999/".into(),
+            ..Default::default()
+        };
+        assert_eq!(cloud_endpoint(&cfg), "https://localhost:9999");
+    }
+
+    #[test]
+    fn cloud_endpoint_trims_multiple_trailing_slashes() {
+        let cfg = CloudConfig {
+            endpoint: "https://localhost:9999///".into(),
+            ..Default::default()
+        };
+        assert_eq!(cloud_endpoint(&cfg), "https://localhost:9999");
+    }
+
+    #[test]
+    fn cloud_endpoint_no_trailing_slash_unchanged() {
+        let cfg = CloudConfig {
+            endpoint: "https://cloud.oxidelink.dev/api".into(),
+            ..Default::default()
+        };
+        assert_eq!(cloud_endpoint(&cfg), "https://cloud.oxidelink.dev/api");
+    }
+
+    #[test]
+    fn cloud_endpoint_empty_string_stays_empty() {
+        let cfg = CloudConfig::default();
+        assert_eq!(cloud_endpoint(&cfg), "");
+    }
+
+    // -----------------------------------------------------------------------
+    // CloudProfile serialization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cloud_profile_default_values() {
+        let cp = CloudProfile::default();
+        assert!(cp.id.is_empty());
+        assert!(cp.name.is_empty());
+        assert!(cp.author.is_empty());
+        assert!(cp.description.is_empty());
+        assert!(cp.download_url.is_empty());
+        assert!(cp.tags.is_empty());
+        assert_eq!(cp.downloads, 0);
+        assert!((cp.rating - 0.0).abs() < f64::EPSILON);
+        assert!(cp.created_at.is_empty());
+    }
+
+    #[test]
+    fn cloud_profile_serde_round_trip() {
+        let cp = CloudProfile {
+            id: "test-1".into(),
+            name: "Test Profile".into(),
+            author: "tester".into(),
+            description: "A test profile".into(),
+            download_url: "https://localhost:9999/profiles/test-1".into(),
+            tags: vec!["fps".into(), "test".into()],
+            downloads: 999,
+            rating: 5.0,
+            created_at: "2024-12-31T23:59:59Z".into(),
+        };
+        let json = serde_json::to_string(&cp).unwrap();
+        let decoded: CloudProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(cp, decoded);
+    }
+
+    #[test]
+    fn cloud_profile_serde_uses_snake_case_fields() {
+        let cp = CloudProfile {
+            id: "x".into(),
+            name: "X".into(),
+            author: "a".into(),
+            description: "d".into(),
+            download_url: "u".into(),
+            tags: vec![],
+            downloads: 1,
+            rating: 2.0,
+            created_at: "c".into(),
+        };
+        let json = serde_json::to_string(&cp).unwrap();
+        assert!(json.contains("\"download_url\""));
+        assert!(json.contains("\"created_at\""));
+    }
+
+    // -----------------------------------------------------------------------
+    // Disabled-config error paths (no network needed)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn list_community_profiles_disabled_returns_error() {
+        let config = CloudConfig::default(); // enabled = false
+        let result = list_community_profiles_with_config(&config, None);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "cloud sharing is disabled");
+    }
+
+    #[test]
+    fn list_community_profiles_disabled_with_tags_returns_error() {
+        let config = CloudConfig::default();
+        let result = list_community_profiles_with_config(&config, Some("fps".into()));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn download_profile_disabled_returns_error() {
+        let config = CloudConfig::default();
+        let result = download_profile_with_config(&config, "p1".into());
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "cloud sharing is disabled");
+    }
+
+    #[test]
+    fn upload_profile_disabled_returns_error() {
+        let config = CloudConfig::default();
+        let profile = Profile::default();
+        let result = upload_profile_with_config(&config, profile);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "cloud sharing is disabled");
+    }
+
+    #[test]
+    fn get_profile_by_code_disabled_returns_error() {
+        let config = CloudConfig::default();
+        let result = get_profile_by_code_with_config(&config, "code1".into());
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "cloud sharing is disabled");
+    }
+
+    // -----------------------------------------------------------------------
+    // Mock HTTP paths (localhost)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_localhost_detects_localhost_and_127() {
+        assert!(is_localhost("https://localhost:9999/profiles"));
+        assert!(is_localhost("https://127.0.0.1:8080/api"));
+        assert!(!is_localhost("https://cloud.oxidelink.dev"));
+    }
+
+    #[test]
+    fn mock_network_response_get_profiles_list() {
+        let url = "https://localhost:9999/profiles";
+        let result = mock_network_response(url, "GET", None);
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert!(body.contains("\"id\": \"p1\""));
+        assert!(body.contains("\"id\": \"p2\""));
+    }
+
+    #[test]
+    fn mock_network_response_get_single_profile() {
+        let url = "https://localhost:9999/profiles/p1";
+        let result = mock_network_response(url, "GET", None);
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert!(body.contains("\"id\": \"p1\""));
+        assert!(body.contains("\"enabled\": true"));
+    }
+
+    #[test]
+    fn mock_network_response_post_profiles_returns_share_code() {
+        let url = "https://localhost:9999/profiles";
+        let result = mock_network_response(url, "POST", Some("{}"));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), r#""share-mock-abc123""#);
+    }
+
+    #[test]
+    fn mock_network_response_unknown_path_returns_error() {
+        let url = "https://localhost:9999/unknown";
+        let result = mock_network_response(url, "GET", None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn mock_network_response_delete_method_returns_error() {
+        let url = "https://localhost:9999/profiles";
+        let result = mock_network_response(url, "DELETE", None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn list_community_profiles_mock_no_tags() {
+        let config = CloudConfig {
+            enabled: true,
+            endpoint: "https://localhost:9999".into(),
+            ..Default::default()
+        };
+        let profiles = list_community_profiles_with_config(&config, None).unwrap();
+        assert_eq!(profiles.len(), 2);
+        assert_eq!(profiles[0].id, "p1");
+        assert_eq!(profiles[0].name, "Aim");
+        assert_eq!(profiles[0].author, "alice");
+        assert_eq!(profiles[0].downloads, 42);
+        assert!((profiles[0].rating - 4.5).abs() < f64::EPSILON);
+        assert_eq!(profiles[1].id, "p2");
+        assert_eq!(profiles[1].tags, vec!["rpg"]);
+    }
+
+    #[test]
+    fn list_community_profiles_mock_with_tags() {
+        let config = CloudConfig {
+            enabled: true,
+            endpoint: "https://localhost:9999".into(),
+            ..Default::default()
+        };
+        // The mock ignores query params but still returns the list.
+        let profiles =
+            list_community_profiles_with_config(&config, Some("fps".into())).unwrap();
+        assert_eq!(profiles.len(), 2);
+    }
+
+    #[test]
+    fn upload_profile_mock_returns_share_code() {
+        let config = CloudConfig {
+            enabled: true,
+            endpoint: "https://localhost:9999".into(),
+            ..Default::default()
+        };
+        let profile = Profile {
+            id: "test".into(),
+            name: "Test".into(),
+            enabled: true,
+            ..Default::default()
+        };
+        let code = upload_profile_with_config(&config, profile).unwrap();
+        assert_eq!(code, "share-mock-abc123");
+    }
+
+    #[test]
+    fn download_profile_mock_returns_profile() {
+        let config = CloudConfig {
+            enabled: true,
+            endpoint: "https://localhost:9999".into(),
+            ..Default::default()
+        };
+        let profile = download_profile_with_config(&config, "p1".into()).unwrap();
+        assert_eq!(profile.id, "p1");
+        assert_eq!(profile.name, "Aim");
+        assert!(profile.enabled);
+    }
+
+    #[test]
+    fn get_profile_by_code_mock_returns_profile() {
+        let config = CloudConfig {
+            enabled: true,
+            endpoint: "https://localhost:9999".into(),
+            ..Default::default()
+        };
+        let profile = get_profile_by_code_with_config(&config, "any-code".into()).unwrap();
+        assert_eq!(profile.id, "p1");
+    }
+
+    // -----------------------------------------------------------------------
+    // set_cloud_config validation (rejection path only — no disk write on err)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn set_cloud_config_rejects_http_endpoint() {
+        let cfg = CloudConfig {
+            enabled: true,
+            endpoint: "http://localhost:9999".into(),
+            ..Default::default()
+        };
+        let result = set_cloud_config(cfg);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_cloud_config_rejects_placeholder_endpoint() {
+        let cfg = CloudConfig {
+            enabled: true,
+            endpoint: "https://example.com".into(),
+            ..Default::default()
+        };
+        let result = set_cloud_config(cfg);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_cloud_config_rejects_no_scheme() {
+        let cfg = CloudConfig {
+            enabled: true,
+            endpoint: "just-a-host".into(),
+            ..Default::default()
+        };
+        let result = set_cloud_config(cfg);
+        assert!(result.is_err());
+    }
 }

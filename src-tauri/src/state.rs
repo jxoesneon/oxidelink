@@ -1391,3 +1391,1212 @@ pub fn timestamp_now() -> u64 {
         })
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ===========================================================================
+    //  GateCalibrationCollector
+    // ===========================================================================
+
+    #[test]
+    fn gate_cal_collector_default_is_inactive() {
+        let collector = GateCalibrationCollector::default();
+        assert!(!collector.active);
+        assert!(!collector.done);
+        assert!(collector.samples.is_empty());
+    }
+
+    #[test]
+    fn gate_cal_collector_start_activates_and_clears() {
+        let mut collector = GateCalibrationCollector::default();
+        collector.samples.push((1.0, 2.0));
+        collector.start();
+        assert!(collector.active);
+        assert!(!collector.done);
+        assert!(collector.samples.is_empty());
+    }
+
+    #[test]
+    fn gate_cal_collector_add_when_active() {
+        let mut collector = GateCalibrationCollector::default();
+        collector.start();
+        collector.add(0.1, 0.2);
+        collector.add(0.3, 0.4);
+        assert_eq!(collector.samples.len(), 2);
+        assert_eq!(collector.samples[0], (0.1, 0.2));
+        assert_eq!(collector.samples[1], (0.3, 0.4));
+    }
+
+    #[test]
+    fn gate_cal_collector_add_ignored_when_inactive() {
+        let mut collector = GateCalibrationCollector::default();
+        collector.add(0.1, 0.2);
+        assert!(collector.samples.is_empty());
+    }
+
+    #[test]
+    fn gate_cal_collector_add_ignored_when_done() {
+        let mut collector = GateCalibrationCollector::default();
+        collector.start();
+        collector.finish();
+        collector.add(0.1, 0.2);
+        assert!(collector.samples.is_empty());
+    }
+
+    #[test]
+    fn gate_cal_collector_is_ready_false_below_threshold() {
+        let mut collector = GateCalibrationCollector::default();
+        collector.start();
+        for _ in 0..100 {
+            collector.add(0.5, 0.5);
+        }
+        assert!(!collector.is_ready());
+    }
+
+    #[test]
+    fn gate_cal_collector_is_ready_true_at_threshold() {
+        let mut collector = GateCalibrationCollector::default();
+        collector.start();
+        for _ in 0..500 {
+            collector.add(0.5, 0.5);
+        }
+        assert!(collector.is_ready());
+    }
+
+    #[test]
+    fn gate_cal_collector_is_ready_false_when_done() {
+        let mut collector = GateCalibrationCollector::default();
+        collector.start();
+        for _ in 0..500 {
+            collector.add(0.5, 0.5);
+        }
+        collector.finish();
+        assert!(!collector.is_ready());
+    }
+
+    #[test]
+    fn gate_cal_collector_is_ready_false_when_inactive() {
+        let mut collector = GateCalibrationCollector::default();
+        for _ in 0..500 {
+            collector.add(0.5, 0.5);
+        }
+        // Inactive, so samples won't be added
+        assert!(!collector.is_ready());
+    }
+
+    #[test]
+    fn gate_cal_collector_finish_sets_done_and_inactive() {
+        let mut collector = GateCalibrationCollector::default();
+        collector.start();
+        collector.add(1.0, 1.0);
+        collector.finish();
+        assert!(collector.done);
+        assert!(!collector.active);
+        // Samples are preserved after finish
+        assert_eq!(collector.samples.len(), 1);
+    }
+
+    #[test]
+    fn gate_cal_collector_cancel_clears_everything() {
+        let mut collector = GateCalibrationCollector::default();
+        collector.start();
+        collector.add(1.0, 2.0);
+        collector.add(3.0, 4.0);
+        collector.cancel();
+        assert!(!collector.active);
+        assert!(!collector.done);
+        assert!(collector.samples.is_empty());
+    }
+
+    #[test]
+    fn gate_cal_collector_start_after_finish_resets() {
+        let mut collector = GateCalibrationCollector::default();
+        collector.start();
+        collector.add(1.0, 1.0);
+        collector.finish();
+        collector.start();
+        assert!(collector.active);
+        assert!(!collector.done);
+        assert!(collector.samples.is_empty());
+    }
+
+    #[test]
+    fn gate_cal_collector_min_samples_is_500() {
+        assert_eq!(GateCalibrationCollector::MIN_SAMPLES, 500);
+    }
+
+    // ===========================================================================
+    //  ConnectionType
+    // ===========================================================================
+
+    #[test]
+    fn connection_type_default_is_bluetooth() {
+        assert_eq!(ConnectionType::default(), ConnectionType::Bluetooth);
+    }
+
+    #[test]
+    fn connection_type_usb_variant() {
+        let ct = ConnectionType::Usb;
+        assert_eq!(ct, ConnectionType::Usb);
+    }
+
+    #[test]
+    fn connection_type_serialization() {
+        let bt = ConnectionType::Bluetooth;
+        let s = serde_json::to_string(&bt).unwrap();
+        assert_eq!(s, "\"Bluetooth\"");
+        let usb = ConnectionType::Usb;
+        let s = serde_json::to_string(&usb).unwrap();
+        assert_eq!(s, "\"Usb\"");
+    }
+
+    #[test]
+    fn connection_type_deserialization() {
+        let bt: ConnectionType = serde_json::from_str("\"Bluetooth\"").unwrap();
+        assert_eq!(bt, ConnectionType::Bluetooth);
+        let usb: ConnectionType = serde_json::from_str("\"Usb\"").unwrap();
+        assert_eq!(usb, ConnectionType::Usb);
+    }
+
+    // ===========================================================================
+    //  DeviceInfo
+    // ===========================================================================
+
+    #[test]
+    fn device_info_default_all_empty() {
+        let di = DeviceInfo::default();
+        assert!(di.firmware_version.is_empty());
+        assert_eq!(di.controller_type, 0);
+        assert!(di.mac_address.is_empty());
+        assert!(!di.colors_from_spi);
+        assert!(di.connection.is_empty());
+        assert!(di.spi.is_none());
+    }
+
+    #[test]
+    fn device_info_serialization_round_trip() {
+        let di = DeviceInfo {
+            firmware_version: "2.0".into(),
+            controller_type: 3,
+            mac_address: "AA:BB:CC:DD:EE:FF".into(),
+            colors_from_spi: true,
+            connection: "Bluetooth".into(),
+            spi: Some(SpiInfo {
+                calibration: true,
+                serial: "SN123".into(),
+                body_color: "rgb(40,40,40)".into(),
+                grip_color: "rgb(20,20,20)".into(),
+                button_color: "rgb(255,255,255)".into(),
+                use_spi_colors: true,
+            }),
+        };
+        let s = serde_json::to_string(&di).unwrap();
+        let back: DeviceInfo = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.firmware_version, "2.0");
+        assert_eq!(back.controller_type, 3);
+        assert_eq!(back.mac_address, "AA:BB:CC:DD:EE:FF");
+        assert!(back.colors_from_spi);
+        assert_eq!(back.connection, "Bluetooth");
+        assert!(back.spi.is_some());
+        let spi = back.spi.unwrap();
+        assert!(spi.calibration);
+        assert_eq!(spi.serial, "SN123");
+        assert_eq!(spi.body_color, "rgb(40,40,40)");
+    }
+
+    #[test]
+    fn device_info_serialization_no_spi() {
+        let di = DeviceInfo {
+            firmware_version: "1.0".into(),
+            controller_type: 1,
+            mac_address: "11:22:33:44:55:66".into(),
+            colors_from_spi: false,
+            connection: "USB".into(),
+            spi: None,
+        };
+        let s = serde_json::to_string(&di).unwrap();
+        assert!(s.contains("\"firmware_version\":\"1.0\""));
+        assert!(s.contains("\"controller_type\":1"));
+        assert!(s.contains("\"spi\":null"));
+    }
+
+    // ===========================================================================
+    //  SpiInfo
+    // ===========================================================================
+
+    #[test]
+    fn spi_info_default_all_empty() {
+        let spi = SpiInfo::default();
+        assert!(!spi.calibration);
+        assert!(spi.serial.is_empty());
+        assert!(spi.body_color.is_empty());
+        assert!(spi.grip_color.is_empty());
+        assert!(spi.button_color.is_empty());
+        assert!(!spi.use_spi_colors);
+    }
+
+    #[test]
+    fn spi_info_serialization_round_trip() {
+        let spi = SpiInfo {
+            calibration: true,
+            serial: "XYZ".into(),
+            body_color: "rgb(1,2,3)".into(),
+            grip_color: "rgb(4,5,6)".into(),
+            button_color: "rgb(7,8,9)".into(),
+            use_spi_colors: false,
+        };
+        let s = serde_json::to_string(&spi).unwrap();
+        let back: SpiInfo = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.calibration, spi.calibration);
+        assert_eq!(back.serial, spi.serial);
+        assert_eq!(back.body_color, spi.body_color);
+        assert_eq!(back.grip_color, spi.grip_color);
+        assert_eq!(back.button_color, spi.button_color);
+        assert_eq!(back.use_spi_colors, spi.use_spi_colors);
+    }
+
+    // ===========================================================================
+    //  ControllerState defaults
+    // ===========================================================================
+
+    #[test]
+    fn controller_state_default_values() {
+        let state = ControllerState::default();
+        assert!(!state.connected);
+        assert_eq!(state.battery_percent, 0);
+        assert_eq!(state.battery_raw, 0);
+        assert!(!state.charging);
+        assert_eq!(state.signal_strength, -60);
+        assert_eq!(state.left_trigger, 0.0);
+        assert_eq!(state.right_trigger, 0.0);
+        assert_eq!(state.timestamp, 0);
+        assert_eq!(state.connection_type, ConnectionType::Bluetooth);
+        assert!(state.device_info.is_none());
+        assert!(state.stick_calibration.is_none());
+        assert!(state.imu_calibration.is_none());
+        assert!(!state.imu_enabled);
+        assert!(!state.vibration_enabled);
+        assert_eq!(state.battery_voltage_mv, 0);
+        assert_eq!(state.imu_gyro_range, 0);
+        assert_eq!(state.imu_accel_range, 0);
+        assert_eq!(state.report_mode, 0x30);
+        assert_eq!(state.slot_index, 0);
+        assert_eq!(state.camera_yaw, 0.0);
+        assert!(!state.flick_active);
+        assert_eq!(state.gyro_mouse_delta, (0, 0));
+        assert!(!state.validated);
+    }
+
+    #[test]
+    fn controller_state_default_buttons_all_false() {
+        let state = ControllerState::default();
+        let b = &state.buttons;
+        assert!(!b.a);
+        assert!(!b.b);
+        assert!(!b.x);
+        assert!(!b.y);
+        assert!(!b.l);
+        assert!(!b.r);
+        assert!(!b.zl);
+        assert!(!b.zr);
+        assert!(!b.minus);
+        assert!(!b.plus);
+        assert!(!b.home);
+        assert!(!b.capture);
+        assert!(!b.stick_l);
+        assert!(!b.stick_r);
+        assert!(!b.dpad_up);
+        assert!(!b.dpad_down);
+        assert!(!b.dpad_left);
+        assert!(!b.dpad_right);
+    }
+
+    #[test]
+    fn controller_state_default_sticks_zero() {
+        let state = ControllerState::default();
+        assert_eq!(state.left_stick.x, 0.0);
+        assert_eq!(state.left_stick.y, 0.0);
+        assert_eq!(state.left_stick.raw_x, 0);
+        assert_eq!(state.left_stick.raw_y, 0);
+        assert_eq!(state.right_stick.x, 0.0);
+        assert_eq!(state.right_stick.y, 0.0);
+        assert_eq!(state.right_stick.raw_x, 0);
+        assert_eq!(state.right_stick.raw_y, 0);
+    }
+
+    // ===========================================================================
+    //  ButtonState get/set
+    // ===========================================================================
+
+    #[test]
+    fn button_state_get_set_all_buttons() {
+        let mut b = ButtonState::default();
+        for id in [
+            ButtonId::A,
+            ButtonId::B,
+            ButtonId::X,
+            ButtonId::Y,
+            ButtonId::Up,
+            ButtonId::Down,
+            ButtonId::Left,
+            ButtonId::Right,
+            ButtonId::L,
+            ButtonId::R,
+            ButtonId::Zl,
+            ButtonId::Zr,
+            ButtonId::Minus,
+            ButtonId::Plus,
+            ButtonId::Home,
+            ButtonId::Capture,
+            ButtonId::LStick,
+            ButtonId::RStick,
+        ] {
+            b.set(id, true);
+            assert!(b.get(id), "button {:?} should be true after set", id);
+            b.set(id, false);
+            assert!(!b.get(id), "button {:?} should be false after unset", id);
+        }
+    }
+
+    #[test]
+    fn button_state_default_is_all_false() {
+        let b = ButtonState::default();
+        for id in [
+            ButtonId::A,
+            ButtonId::B,
+            ButtonId::X,
+            ButtonId::Y,
+            ButtonId::Up,
+            ButtonId::Down,
+            ButtonId::Left,
+            ButtonId::Right,
+            ButtonId::L,
+            ButtonId::R,
+            ButtonId::Zl,
+            ButtonId::Zr,
+            ButtonId::Minus,
+            ButtonId::Plus,
+            ButtonId::Home,
+            ButtonId::Capture,
+            ButtonId::LStick,
+            ButtonId::RStick,
+        ] {
+            assert!(!b.get(id), "button {:?} should be false by default", id);
+        }
+    }
+
+    #[test]
+    fn button_state_partial_eq() {
+        let mut a = ButtonState::default();
+        let mut b = ButtonState::default();
+        assert_eq!(a, b);
+        a.a = true;
+        assert_ne!(a, b);
+        b.a = true;
+        assert_eq!(a, b);
+    }
+
+    // ===========================================================================
+    //  StickState
+    // ===========================================================================
+
+    #[test]
+    fn stick_state_default_values() {
+        let s = StickState::default();
+        assert_eq!(s.x, 0.0);
+        assert_eq!(s.y, 0.0);
+        assert_eq!(s.raw_x, 0);
+        assert_eq!(s.raw_y, 0);
+    }
+
+    #[test]
+    fn stick_state_partial_eq() {
+        let a = StickState {
+            x: 0.5,
+            y: -0.3,
+            raw_x: 100,
+            raw_y: 200,
+        };
+        let b = StickState {
+            x: 0.5,
+            y: -0.3,
+            raw_x: 100,
+            raw_y: 200,
+        };
+        assert_eq!(a, b);
+    }
+
+    // ===========================================================================
+    //  StickZones defaults
+    // ===========================================================================
+
+    #[test]
+    fn stick_zones_default_values() {
+        let z = StickZones::default();
+        assert_eq!(z.deadzone, 0.0);
+        assert_eq!(z.low, 0.25);
+        assert_eq!(z.medium, 0.5);
+        assert_eq!(z.high, 0.75);
+        assert!(z.low_actions.is_empty());
+        assert!(z.medium_actions.is_empty());
+        assert!(z.high_actions.is_empty());
+    }
+
+    // ===========================================================================
+    //  TriggerZones defaults
+    // ===========================================================================
+
+    #[test]
+    fn trigger_zones_default_values() {
+        let z = TriggerZones::default();
+        assert_eq!(z.deadzone, 0.0);
+        assert_eq!(z.low, 0.25);
+        assert_eq!(z.medium, 0.5);
+        assert_eq!(z.high, 0.75);
+        assert!(z.low_actions.is_empty());
+        assert!(z.medium_actions.is_empty());
+        assert!(z.high_actions.is_empty());
+    }
+
+    // ===========================================================================
+    //  GyroMapping defaults
+    // ===========================================================================
+
+    #[test]
+    fn gyro_mapping_default_values() {
+        let g = GyroMapping::default();
+        assert_eq!(g.mode, GyroMode::Off);
+        assert_eq!(g.sensitivity, [1.0, 1.0]);
+        assert_eq!(g.smoothing, 0.0);
+        assert_eq!(g.deadzone, 0.0);
+    }
+
+    // ===========================================================================
+    //  Mappings defaults
+    // ===========================================================================
+
+    #[test]
+    fn mappings_default_values() {
+        let m = Mappings::default();
+        assert!(m.buttons.is_empty());
+        assert_eq!(m.turbo_interval_ms, 100);
+        assert_eq!(m.turbo_duty_cycle, 0.5);
+        assert_eq!(m.gyro.mode, GyroMode::Off);
+    }
+
+    // ===========================================================================
+    //  LogConfig defaults
+    // ===========================================================================
+
+    #[test]
+    fn log_config_default_values() {
+        let lc = LogConfig::default();
+        assert_eq!(lc.level, "info");
+        assert_eq!(lc.max_lines, 1000);
+        assert!(lc.ring_buffer);
+        assert!(!lc.log_file);
+    }
+
+    // ===========================================================================
+    //  TrayState defaults
+    // ===========================================================================
+
+    #[test]
+    fn tray_state_default_values() {
+        let ts = TrayState::default();
+        assert!(ts.visible);
+        assert!(!ts.minimized);
+        assert!(!ts.auto_start);
+    }
+
+    // ===========================================================================
+    //  KbmConfig defaults
+    // ===========================================================================
+
+    #[test]
+    fn kbm_config_default_values() {
+        let kc = KbmConfig::default();
+        assert!(!kc.enabled);
+        assert!(!kc.anti_cheat_mode);
+        assert_eq!(kc.mouse_sensitivity, 1.0);
+        assert_eq!(kc.key_repeat_delay_ms, 250);
+        assert_eq!(kc.key_repeat_rate_ms, 33);
+    }
+
+    // ===========================================================================
+    //  DsuConfig defaults
+    // ===========================================================================
+
+    #[test]
+    fn dsu_config_default_values() {
+        let dc = DsuConfig::default();
+        assert!(!dc.enabled);
+        assert_eq!(dc.bind_address, "127.0.0.1");
+        assert_eq!(dc.port, 26760);
+        assert_eq!(dc.update_rate_hz, 60);
+    }
+
+    // ===========================================================================
+    //  NotificationConfig defaults
+    // ===========================================================================
+
+    #[test]
+    fn notification_config_default_all_enabled() {
+        let nc = NotificationConfig::default();
+        assert!(nc.enabled);
+        assert!(nc.critical_enabled);
+        assert!(nc.warning_enabled);
+        assert!(nc.info_enabled);
+        assert!(nc.notify_disconnect);
+        assert!(nc.notify_bt_power);
+        assert!(nc.notify_low_battery);
+        assert!(nc.notify_drift);
+        assert!(nc.notify_reconnect);
+    }
+
+    // ===========================================================================
+    //  KeepAliveStatus defaults
+    // ===========================================================================
+
+    #[test]
+    fn keepalive_status_default_values() {
+        let ka = KeepAliveStatus::default();
+        assert!(!ka.active);
+        assert_eq!(ka.interval_ms, 3000);
+        assert_eq!(ka.last_ping, 0);
+        assert_eq!(ka.power_events_detected, 0);
+        assert!(!ka.adapter_sleep_prevented);
+        assert!(ka.adaptive_mode);
+    }
+
+    // ===========================================================================
+    //  StickCalibrationConfig defaults
+    // ===========================================================================
+
+    #[test]
+    fn stick_cal_config_default_values() {
+        let sc = StickCalibrationConfig::default();
+        assert!(sc.adaptive_deadzone_enabled);
+        assert!(sc.center_auto_cal_enabled);
+        assert!(sc.drift_detection_enabled);
+        assert!(!sc.gate_calibration_enabled);
+        assert_eq!(sc.response_curve_type, "exponential");
+        assert_eq!(sc.response_curve_power, 1.3);
+        assert_eq!(sc.bezier_p1, [0.3, 0.9]);
+        assert_eq!(sc.bezier_p2, [0.7, 0.1]);
+        assert_eq!(sc.deadzone_safety_margin, 1.5);
+        assert_eq!(sc.min_deadzone, 0.01);
+        assert_eq!(sc.max_deadzone, 0.15);
+        assert_eq!(sc.deadzone_shape, "radial");
+    }
+
+    // ===========================================================================
+    //  AppConfig defaults
+    // ===========================================================================
+
+    #[test]
+    fn app_config_default_values() {
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.deadzone_left, 0.08);
+        assert_eq!(cfg.deadzone_right, 0.08);
+        assert_eq!(cfg.keepalive_interval_ms, 3000);
+        assert!(cfg.adaptive_keepalive);
+        assert_eq!(cfg.battery_warning_threshold, 15);
+        assert!(!cfg.mock_mode);
+        assert!(cfg.config_persistence_enabled);
+        assert!(cfg.auto_reconnect);
+        assert_eq!(cfg.reconnect_interval_s, 3);
+        assert!(cfg.bt_power_detection_enabled);
+        assert_eq!(cfg.battery_polling_interval_s, 30);
+        assert!(cfg.close_to_tray);
+        assert!(!cfg.auto_start);
+        assert!(cfg.tray_minimize);
+        assert!(!cfg.hidhide_enabled);
+        assert!(!cfg.hidhide_auto_hide);
+        assert!(!cfg.crash_reporting_enabled);
+        assert!(cfg.crash_reporting_dsn.is_none());
+        assert!(!cfg.telemetry_enabled);
+        assert!(cfg.telemetry_key.is_none());
+        assert!(cfg.update_endpoint.is_empty());
+        assert!(!cfg.real_device_validation);
+    }
+
+    #[test]
+    fn app_config_default_button_remap() {
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.button_remap.a_to, "b");
+        assert_eq!(cfg.button_remap.b_to, "a");
+        assert_eq!(cfg.button_remap.x_to, "y");
+        assert_eq!(cfg.button_remap.y_to, "x");
+    }
+
+    #[test]
+    fn app_config_default_per_controller_profile() {
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.per_controller_profile.len(), CONTROLLER_SLOTS);
+        for p in &cfg.per_controller_profile {
+            assert!(p.is_none());
+        }
+    }
+
+    #[test]
+    fn app_config_default_dsu() {
+        let cfg = AppConfig::default();
+        assert!(!cfg.dsu.enabled);
+        assert_eq!(cfg.dsu.bind_address, "127.0.0.1");
+        assert_eq!(cfg.dsu.port, 26760);
+    }
+
+    // ===========================================================================
+    //  VirtualControllerType
+    // ===========================================================================
+
+    #[test]
+    fn virtual_controller_type_default_is_xbox360() {
+        assert_eq!(
+            VirtualControllerType::default(),
+            VirtualControllerType::Xbox360
+        );
+    }
+
+    #[test]
+    fn virtual_controller_type_serialization() {
+        let xbox = serde_json::to_string(&VirtualControllerType::Xbox360).unwrap();
+        assert_eq!(xbox, "\"xbox360\"");
+        let ds4 = serde_json::to_string(&VirtualControllerType::DualShock4).unwrap();
+        assert_eq!(ds4, "\"dualshock4\"");
+    }
+
+    // ===========================================================================
+    //  NfcConfig
+    // ===========================================================================
+
+    #[test]
+    fn nfc_config_default_values() {
+        let nfc = NfcConfig::default();
+        assert!(!nfc.enabled);
+        assert!(nfc.emulate_bin.is_none());
+        assert!(nfc.last_uid.is_none());
+    }
+
+    #[test]
+    fn nfc_config_serialization_round_trip() {
+        let nfc = NfcConfig {
+            enabled: true,
+            emulate_bin: Some("/path/to/bin".into()),
+            last_uid: Some("UID123".into()),
+        };
+        let s = serde_json::to_string(&nfc).unwrap();
+        let back: NfcConfig = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, nfc);
+    }
+
+    // ===========================================================================
+    //  ValidationConfig
+    // ===========================================================================
+
+    #[test]
+    fn validation_config_default_all_false() {
+        let vc = ValidationConfig::default();
+        assert!(!vc.enable_real_device_checks);
+        assert!(!vc.strict_calibration_requirements);
+        assert!(!vc.mock_mode);
+        assert!(!vc.require_vigembus);
+        assert!(!vc.require_hidhide);
+    }
+
+    // ===========================================================================
+    //  SharedState initialization
+    // ===========================================================================
+
+    #[test]
+    fn shared_state_initializes_four_slots() {
+        let shared = SharedState::new();
+        for i in 0..CONTROLLER_SLOTS {
+            let state = shared.slots[i].read();
+            assert_eq!(state.slot_index, i as u8);
+            assert!(!state.connected);
+        }
+    }
+
+    #[test]
+    fn shared_state_default_config() {
+        let shared = SharedState::new();
+        let cfg = shared.config.read();
+        assert_eq!(cfg.deadzone_left, 0.08);
+        assert_eq!(cfg.battery_warning_threshold, 15);
+    }
+
+    #[test]
+    fn shared_state_default_keepalive() {
+        let shared = SharedState::new();
+        let ka = shared.keepalive.read();
+        assert!(!ka.active);
+        assert_eq!(ka.interval_ms, 3000);
+    }
+
+    #[test]
+    fn shared_state_slot_cmd_txs_all_none() {
+        let shared = SharedState::new();
+        let txs = shared.slot_cmd_txs.read();
+        for tx in txs.iter() {
+            assert!(tx.is_none());
+        }
+    }
+
+    #[test]
+    fn shared_state_active_controllers_starts_zero() {
+        let shared = SharedState::new();
+        assert_eq!(shared.active_controllers.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn shared_state_selected_slot_starts_zero() {
+        let shared = SharedState::new();
+        assert_eq!(shared.selected_slot.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn shared_state_rescan_requested_starts_false() {
+        let shared = SharedState::new();
+        assert!(!shared.rescan_requested.load(Ordering::SeqCst));
+    }
+
+    // ===========================================================================
+    //  SharedState::next_packet_number
+    // ===========================================================================
+
+    #[test]
+    fn next_packet_number_increments() {
+        let shared = SharedState::new();
+        let a = shared.next_packet_number();
+        let b = shared.next_packet_number();
+        assert_eq!(a, 1);
+        assert_eq!(b, 2);
+    }
+
+    #[test]
+    fn next_packet_number_wraps_at_16() {
+        let shared = SharedState::new();
+        // Call 16 times; the 16th should be 16 & 0x0F = 0.
+        for _ in 0..15 {
+            shared.next_packet_number();
+        }
+        assert_eq!(shared.next_packet_number(), 16 & 0x0F);
+        assert_eq!(shared.next_packet_number(), 17 & 0x0F);
+    }
+
+    // ===========================================================================
+    //  SharedState::set_slot_connected / is_slot_active
+    // ===========================================================================
+
+    #[test]
+    fn set_slot_connected_marks_active() {
+        let shared = SharedState::new();
+        shared.set_slot_connected(0, true);
+        assert!(shared.is_slot_active(0));
+        let state = shared.slots[0].read();
+        assert!(state.connected);
+    }
+
+    #[test]
+    fn set_slot_connected_disconnects() {
+        let shared = SharedState::new();
+        shared.set_slot_connected(1, true);
+        assert!(shared.is_slot_active(1));
+        shared.set_slot_connected(1, false);
+        assert!(!shared.is_slot_active(1));
+        let state = shared.slots[1].read();
+        assert!(!state.connected);
+    }
+
+    #[test]
+    fn set_slot_connected_multiple_slots() {
+        let shared = SharedState::new();
+        shared.set_slot_connected(0, true);
+        shared.set_slot_connected(2, true);
+        assert!(shared.is_slot_active(0));
+        assert!(!shared.is_slot_active(1));
+        assert!(shared.is_slot_active(2));
+        assert!(!shared.is_slot_active(3));
+    }
+
+    #[test]
+    fn set_slot_connected_invalid_slot_ignored() {
+        let shared = SharedState::new();
+        shared.set_slot_connected(99, true);
+        assert!(!shared.is_slot_active(99));
+    }
+
+    #[test]
+    fn is_slot_active_invalid_slot_false() {
+        let shared = SharedState::new();
+        assert!(!shared.is_slot_active(10));
+    }
+
+    #[test]
+    fn set_slot_connected_sets_timestamp() {
+        let shared = SharedState::new();
+        shared.set_slot_connected(0, true);
+        let state = shared.slots[0].read();
+        assert!(state.timestamp > 0);
+    }
+
+    // ===========================================================================
+    //  SharedState::request_rescan
+    // ===========================================================================
+
+    #[test]
+    fn request_rescan_sets_flag() {
+        let shared = SharedState::new();
+        assert!(!shared.rescan_requested.load(Ordering::SeqCst));
+        shared.request_rescan();
+        assert!(shared.rescan_requested.load(Ordering::SeqCst));
+    }
+
+    // ===========================================================================
+    //  SharedState::send_device_command_to_slot
+    // ===========================================================================
+
+    #[test]
+    fn send_device_command_invalid_slot_returns_error() {
+        let shared = SharedState::new();
+        let result = shared.send_device_command_to_slot(99, vec![0x01]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid slot"));
+    }
+
+    #[test]
+    fn send_device_command_no_controller_returns_error() {
+        let shared = SharedState::new();
+        let result = shared.send_device_command_to_slot(0, vec![0x01]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("No controller connected"));
+    }
+
+    // ===========================================================================
+    //  ControllerSlot
+    // ===========================================================================
+
+    #[test]
+    fn controller_slot_read_write_roundtrip() {
+        let lock = Arc::new(RwLock::new([
+            ControllerState::default(),
+            ControllerState::default(),
+            ControllerState::default(),
+            ControllerState::default(),
+        ]));
+        let slot = ControllerSlot::new(lock, 2);
+        {
+            let mut state = slot.write();
+            state.battery_percent = 75;
+        }
+        let state = slot.read();
+        assert_eq!(state.battery_percent, 75);
+    }
+
+    // ===========================================================================
+    //  ButtonId serialization
+    // ===========================================================================
+
+    #[test]
+    fn button_id_serialization_lowercase() {
+        assert_eq!(serde_json::to_string(&ButtonId::A).unwrap(), "\"a\"");
+        assert_eq!(serde_json::to_string(&ButtonId::B).unwrap(), "\"b\"");
+        assert_eq!(serde_json::to_string(&ButtonId::Zl).unwrap(), "\"zl\"");
+        assert_eq!(
+            serde_json::to_string(&ButtonId::LStick).unwrap(),
+            "\"lstick\""
+        );
+    }
+
+    #[test]
+    fn button_id_default_is_a() {
+        assert_eq!(ButtonId::default(), ButtonId::A);
+    }
+
+    // ===========================================================================
+    //  MacroStep / Action defaults
+    // ===========================================================================
+
+    #[test]
+    fn macro_step_default_is_wait_ms_zero() {
+        assert_eq!(MacroStep::default(), MacroStep::WaitMs(0));
+    }
+
+    #[test]
+    fn action_default_is_button_a() {
+        assert_eq!(Action::default(), Action::Button(ButtonId::A));
+    }
+
+    // ===========================================================================
+    //  ResponseCurveType
+    // ===========================================================================
+
+    #[test]
+    fn response_curve_type_default_is_linear() {
+        assert_eq!(ResponseCurveType::default(), ResponseCurveType::Linear);
+    }
+
+    #[test]
+    fn response_curve_type_serialization() {
+        assert_eq!(
+            serde_json::to_string(&ResponseCurveType::Linear).unwrap(),
+            "{\"type\":\"linear\"}"
+        );
+        assert_eq!(
+            serde_json::to_string(&ResponseCurveType::SCurve).unwrap(),
+            "{\"type\":\"s_curve\"}"
+        );
+    }
+
+    // ===========================================================================
+    //  ShiftActivation
+    // ===========================================================================
+
+    #[test]
+    fn shift_activation_default_is_always() {
+        assert_eq!(ShiftActivation::default(), ShiftActivation::Always);
+    }
+
+    // ===========================================================================
+    //  CONTROLLER_SLOTS constant
+    // ===========================================================================
+
+    #[test]
+    fn controller_slots_is_four() {
+        assert_eq!(CONTROLLER_SLOTS, 4);
+    }
+
+    // ===========================================================================
+    //  timestamp_now
+    // ===========================================================================
+
+    #[test]
+    fn timestamp_now_returns_nonzero() {
+        let ts = timestamp_now();
+        assert!(ts > 0);
+    }
+
+    #[test]
+    fn timestamp_now_non_decreasing() {
+        let a = timestamp_now();
+        for _ in 0..1000 {
+            std::hint::black_box(0u8);
+        }
+        let b = timestamp_now();
+        assert!(b >= a);
+    }
+
+    // ===========================================================================
+    //  AppLogEntry
+    // ===========================================================================
+
+    #[test]
+    fn app_log_entry_default() {
+        let entry = AppLogEntry::default();
+        assert_eq!(entry.timestamp, 0);
+        assert!(entry.level.is_empty());
+        assert!(entry.target.is_empty());
+        assert!(entry.message.is_empty());
+    }
+
+    #[test]
+    fn app_log_entry_serialization_round_trip() {
+        let entry = AppLogEntry {
+            timestamp: 12345,
+            level: "info".into(),
+            target: "oxidelink::state".into(),
+            message: "test message".into(),
+        };
+        let s = serde_json::to_string(&entry).unwrap();
+        let back: AppLogEntry = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, entry);
+    }
+
+    // ===========================================================================
+    //  Profile / ProfileManager defaults
+    // ===========================================================================
+
+    #[test]
+    fn profile_default_values() {
+        let p = Profile::default();
+        assert!(p.id.is_empty());
+        assert!(p.name.is_empty());
+        assert!(!p.enabled);
+        assert!(p.auto_rules.is_empty());
+        assert_eq!(p.created_at, 0);
+        assert_eq!(p.updated_at, 0);
+    }
+
+    #[test]
+    fn profile_manager_default_values() {
+        let pm = ProfileManager::default();
+        assert!(pm.profiles.is_empty());
+        assert!(pm.active_profile_id.is_none());
+        assert!(pm.default_profile_id.is_none());
+        assert!(pm.last_applied.is_none());
+    }
+
+    // ===========================================================================
+    //  StickMapping defaults
+    // ===========================================================================
+
+    #[test]
+    fn stick_mapping_default_values() {
+        let sm = StickMapping::default();
+        assert!(sm.left_actions.is_empty());
+        assert!(sm.right_actions.is_empty());
+        assert_eq!(sm.response_curve, ResponseCurveType::Linear);
+    }
+
+    // ===========================================================================
+    //  StickAction default
+    // ===========================================================================
+
+    #[test]
+    fn stick_action_default_is_disabled() {
+        assert_eq!(StickAction::default(), StickAction::Disabled);
+    }
+
+    // ===========================================================================
+    //  GyroMode default
+    // ===========================================================================
+
+    #[test]
+    fn gyro_mode_default_is_off() {
+        assert_eq!(GyroMode::default(), GyroMode::Off);
+    }
+
+    // ===========================================================================
+    //  AutoRule defaults
+    // ===========================================================================
+
+    #[test]
+    fn auto_rule_default_values() {
+        let ar = AutoRule::default();
+        assert_eq!(ar.kind, AutoRuleKind::ProcessPath);
+        assert!(ar.pattern.is_empty());
+        assert_eq!(ar.match_mode, MatchMode::Contains);
+        assert!(!ar.enabled);
+    }
+
+    #[test]
+    fn auto_rule_kind_serialization() {
+        assert_eq!(
+            serde_json::to_string(&AutoRuleKind::ProcessPath).unwrap(),
+            "\"process_path\""
+        );
+        assert_eq!(
+            serde_json::to_string(&AutoRuleKind::WindowTitle).unwrap(),
+            "\"window_title\""
+        );
+    }
+
+    #[test]
+    fn match_mode_serialization() {
+        assert_eq!(serde_json::to_string(&MatchMode::Exact).unwrap(), "\"exact\"");
+        assert_eq!(
+            serde_json::to_string(&MatchMode::Contains).unwrap(),
+            "\"contains\""
+        );
+        assert_eq!(
+            serde_json::to_string(&MatchMode::Regex).unwrap(),
+            "\"regex\""
+        );
+    }
+
+    // ===========================================================================
+    //  StickCalibration defaults
+    // ===========================================================================
+
+    #[test]
+    fn stick_calibration_default_all_zero() {
+        let sc = StickCalibration::default();
+        assert_eq!(sc.left_center_x, 0);
+        assert_eq!(sc.left_center_y, 0);
+        assert_eq!(sc.left_min_x, 0);
+        assert_eq!(sc.left_min_y, 0);
+        assert_eq!(sc.left_max_x, 0);
+        assert_eq!(sc.left_max_y, 0);
+        assert_eq!(sc.right_center_x, 0);
+        assert_eq!(sc.right_center_y, 0);
+        assert_eq!(sc.right_min_x, 0);
+        assert_eq!(sc.right_min_y, 0);
+        assert_eq!(sc.right_max_x, 0);
+        assert_eq!(sc.right_max_y, 0);
+        assert!(sc.source.is_empty());
+        assert!(!sc.valid);
+    }
+
+    // ===========================================================================
+    //  ImuCalibration defaults
+    // ===========================================================================
+
+    #[test]
+    fn imu_calibration_default_all_zero() {
+        let ic = ImuCalibration::default();
+        assert_eq!(ic.accel_origin, [0, 0, 0]);
+        assert_eq!(ic.accel_sensitivity, [0, 0, 0]);
+        assert_eq!(ic.gyro_origin, [0, 0, 0]);
+        assert_eq!(ic.gyro_sensitivity, [0, 0, 0]);
+        assert!(ic.source.is_empty());
+        assert_eq!(ic.horizontal_offsets, [0, 0, 0]);
+    }
+
+    // ===========================================================================
+    //  RumbleState defaults
+    // ===========================================================================
+
+    #[test]
+    fn rumble_state_default_values() {
+        let rs = RumbleState::default();
+        assert!(!rs.enabled);
+        assert_eq!(rs.left_amplitude, 0.0);
+        assert_eq!(rs.right_amplitude, 0.0);
+        assert_eq!(rs.left_frequency, 0.0);
+        assert_eq!(rs.right_frequency, 0.0);
+    }
+
+    // ===========================================================================
+    //  VixInputStatus defaults
+    // ===========================================================================
+
+    #[test]
+    fn vixinput_status_default_values() {
+        let vs = VixInputStatus::default();
+        assert!(!vs.connected);
+        assert!(!vs.xbox_connected);
+        assert!(!vs.ds4_connected);
+        assert!(!vs.dll_loaded);
+        assert!(!vs.driver_connected);
+        assert!(!vs.display_only);
+        assert_eq!(vs.target_type, VirtualControllerType::Xbox360);
+    }
+
+    // ===========================================================================
+    //  Macro defaults
+    // ===========================================================================
+
+    #[test]
+    fn macro_default_values() {
+        let m = Macro::default();
+        assert!(m.id.is_empty());
+        assert!(m.name.is_empty());
+        assert!(m.steps.is_empty());
+    }
+
+    // ===========================================================================
+    //  ShiftLayer defaults
+    // ===========================================================================
+
+    #[test]
+    fn shift_layer_default_values() {
+        let sl = ShiftLayer::default();
+        assert_eq!(sl.id, 0);
+        assert!(sl.name.is_empty());
+        assert_eq!(sl.activation, ShiftActivation::Always);
+    }
+}

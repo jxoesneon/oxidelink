@@ -269,4 +269,423 @@ mod tests {
         assert!(!info.notes.is_empty());
         assert!(info.signature.is_some());
     }
+
+    // -----------------------------------------------------------------------
+    // UpdateInfo struct & serialization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn update_info_construction_with_all_fields() {
+        let info = UpdateInfo {
+            version: "1.2.3".into(),
+            notes: "Release notes".into(),
+            date: Some("2026-01-01T00:00:00Z".into()),
+            signature: Some("sig-abc".into()),
+        };
+        assert_eq!(info.version, "1.2.3");
+        assert_eq!(info.notes, "Release notes");
+        assert_eq!(info.date, Some("2026-01-01T00:00:00Z".into()));
+        assert_eq!(info.signature, Some("sig-abc".into()));
+    }
+
+    #[test]
+    fn update_info_construction_with_none_fields() {
+        let info = UpdateInfo {
+            version: "0.1.0".into(),
+            notes: String::new(),
+            date: None,
+            signature: None,
+        };
+        assert_eq!(info.version, "0.1.0");
+        assert!(info.notes.is_empty());
+        assert!(info.date.is_none());
+        assert!(info.signature.is_none());
+    }
+
+    #[test]
+    fn update_info_serialization_produces_snake_case_fields() {
+        let info = UpdateInfo {
+            version: "2.0.0".into(),
+            notes: "notes".into(),
+            date: Some("2026-06-06".into()),
+            signature: Some("sig".into()),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"version\""));
+        assert!(json.contains("\"notes\""));
+        assert!(json.contains("\"date\""));
+        assert!(json.contains("\"signature\""));
+    }
+
+    #[test]
+    fn update_info_serialization_none_fields_omit() {
+        let info = UpdateInfo {
+            version: "2.0.0".into(),
+            notes: "notes".into(),
+            date: None,
+            signature: None,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        // serde serializes None as null by default (not omitted).
+        assert!(json.contains("\"date\":null"));
+        assert!(json.contains("\"signature\":null"));
+    }
+
+    #[test]
+    fn update_info_clone_preserves_fields() {
+        let info = UpdateInfo {
+            version: "1.0.0".into(),
+            notes: "test".into(),
+            date: Some("d".into()),
+            signature: Some("s".into()),
+        };
+        let cloned = info.clone();
+        assert_eq!(cloned.version, info.version);
+        assert_eq!(cloned.notes, info.notes);
+        assert_eq!(cloned.date, info.date);
+        assert_eq!(cloned.signature, info.signature);
+    }
+
+    // -----------------------------------------------------------------------
+    // Version comparison — additional edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn version_comparison_pre_release_is_lower() {
+        // 1.0.0-alpha is older than 1.0.0
+        assert!(is_update_newer("1.0.0-alpha", "1.0.0").unwrap());
+        // 1.0.0-alpha is older than 1.0.0-beta
+        assert!(is_update_newer("1.0.0-alpha", "1.0.0-beta").unwrap());
+    }
+
+    #[test]
+    fn version_comparison_pre_release_vs_release() {
+        // A release version is newer than a pre-release of the same.
+        assert!(is_update_newer("1.0.0-rc.1", "1.0.0").unwrap());
+        assert!(!is_update_newer("1.0.0", "1.0.0-rc.1").unwrap());
+    }
+
+    #[test]
+    fn version_comparison_build_metadata_does_not_override_major() {
+        // Build metadata should not make an older version appear newer.
+        assert!(is_update_newer("1.0.0+build1", "1.1.0+build2").unwrap());
+        assert!(!is_update_newer("1.1.0+build1", "1.0.0+build2").unwrap());
+    }
+
+    #[test]
+    fn version_comparison_major_version_jump() {
+        assert!(is_update_newer("1.9.9", "2.0.0").unwrap());
+        assert!(is_update_newer("1.0.0", "10.0.0").unwrap());
+    }
+
+    #[test]
+    fn version_comparison_minor_and_patch_increments() {
+        assert!(is_update_newer("1.0.0", "1.0.1").unwrap());
+        assert!(is_update_newer("1.0.0", "1.1.0").unwrap());
+        assert!(!is_update_newer("1.1.0", "1.0.5").unwrap());
+    }
+
+    #[test]
+    fn version_comparison_error_message_contains_version() {
+        let err = is_update_newer("bad-version", "0.1.0").unwrap_err();
+        assert!(err.contains("bad-version"));
+        assert!(err.contains("failed to parse current version"));
+    }
+
+    #[test]
+    fn version_comparison_error_message_contains_candidate() {
+        let err = is_update_newer("0.1.0", "not-valid").unwrap_err();
+        assert!(err.contains("not-valid"));
+        assert!(err.contains("failed to parse candidate version"));
+    }
+
+    #[test]
+    fn version_comparison_empty_strings_error() {
+        assert!(is_update_newer("", "0.1.0").is_err());
+        assert!(is_update_newer("0.1.0", "").is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_update_manifest — all branches
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn manifest_parsing_body_alias_for_notes() {
+        let value = serde_json::json!({
+            "version": "1.0.0",
+            "body": "body field notes"
+        });
+        let info = parse_update_manifest(&value).unwrap();
+        assert_eq!(info.notes, "body field notes");
+    }
+
+    #[test]
+    fn manifest_parsing_notes_takes_priority_over_body() {
+        let value = serde_json::json!({
+            "version": "1.0.0",
+            "notes": "notes field",
+            "body": "body field"
+        });
+        let info = parse_update_manifest(&value).unwrap();
+        assert_eq!(info.notes, "notes field");
+    }
+
+    #[test]
+    fn manifest_parsing_date_alias() {
+        let value = serde_json::json!({
+            "version": "1.0.0",
+            "date": "2026-03-15"
+        });
+        let info = parse_update_manifest(&value).unwrap();
+        assert_eq!(info.date, Some("2026-03-15".into()));
+    }
+
+    #[test]
+    fn manifest_parsing_pub_date_takes_priority_over_date() {
+        let value = serde_json::json!({
+            "version": "1.0.0",
+            "pub_date": "2026-03-15",
+            "date": "2026-03-14"
+        });
+        let info = parse_update_manifest(&value).unwrap();
+        assert_eq!(info.date, Some("2026-03-15".into()));
+    }
+
+    #[test]
+    fn manifest_parsing_missing_notes_defaults_empty() {
+        let value = serde_json::json!({"version": "1.0.0"});
+        let info = parse_update_manifest(&value).unwrap();
+        assert!(info.notes.is_empty());
+    }
+
+    #[test]
+    fn manifest_parsing_missing_date_is_none() {
+        let value = serde_json::json!({"version": "1.0.0"});
+        let info = parse_update_manifest(&value).unwrap();
+        assert!(info.date.is_none());
+    }
+
+    #[test]
+    fn manifest_parsing_missing_signature_is_none() {
+        let value = serde_json::json!({"version": "1.0.0"});
+        let info = parse_update_manifest(&value).unwrap();
+        assert!(info.signature.is_none());
+    }
+
+    #[test]
+    fn manifest_parsing_top_level_signature_overrides_platform() {
+        let value = serde_json::json!({
+            "version": "1.0.0",
+            "signature": "top-level-sig",
+            "platforms": {
+                "windows-x86_64": {
+                    "signature": "platform-sig"
+                }
+            }
+        });
+        let info = parse_update_manifest(&value).unwrap();
+        assert_eq!(info.signature, Some("top-level-sig".into()));
+    }
+
+    #[test]
+    fn manifest_parsing_platform_without_windows_key() {
+        let value = serde_json::json!({
+            "version": "1.0.0",
+            "platforms": {
+                "darwin-aarch64": {
+                    "signature": "mac-sig"
+                }
+            }
+        });
+        let info = parse_update_manifest(&value).unwrap();
+        // No windows-x86_64 key and no top-level signature -> None.
+        assert!(info.signature.is_none());
+    }
+
+    #[test]
+    fn manifest_parsing_platform_without_signature_field() {
+        let value = serde_json::json!({
+            "version": "1.0.0",
+            "platforms": {
+                "windows-x86_64": {
+                    "url": "https://example.com/setup.exe"
+                }
+            }
+        });
+        let info = parse_update_manifest(&value).unwrap();
+        assert!(info.signature.is_none());
+    }
+
+    #[test]
+    fn manifest_parsing_non_string_version_errors() {
+        let value = serde_json::json!({"version": 123});
+        assert!(parse_update_manifest(&value).is_err());
+    }
+
+    #[test]
+    fn manifest_parsing_version_null_errors() {
+        let value = serde_json::json!({"version": null});
+        assert!(parse_update_manifest(&value).is_err());
+    }
+
+    #[test]
+    fn manifest_parsing_empty_object_errors() {
+        let value = serde_json::json!({});
+        assert!(parse_update_manifest(&value).is_err());
+    }
+
+    #[test]
+    fn manifest_parsing_empty_notes_string() {
+        let value = serde_json::json!({
+            "version": "1.0.0",
+            "notes": ""
+        });
+        let info = parse_update_manifest(&value).unwrap();
+        assert!(info.notes.is_empty());
+    }
+
+    #[test]
+    fn manifest_parsing_empty_body_string() {
+        let value = serde_json::json!({
+            "version": "1.0.0",
+            "body": ""
+        });
+        let info = parse_update_manifest(&value).unwrap();
+        assert!(info.notes.is_empty());
+    }
+
+    #[test]
+    fn manifest_parsing_notes_non_string_falls_back_to_empty() {
+        let value = serde_json::json!({
+            "version": "1.0.0",
+            "notes": 42
+        });
+        let info = parse_update_manifest(&value).unwrap();
+        assert!(info.notes.is_empty());
+    }
+
+    #[test]
+    fn manifest_parsing_date_non_string_is_none() {
+        let value = serde_json::json!({
+            "version": "1.0.0",
+            "pub_date": 12345
+        });
+        let info = parse_update_manifest(&value).unwrap();
+        assert!(info.date.is_none());
+    }
+
+    #[test]
+    fn manifest_parsing_signature_non_string_uses_platform_fallback() {
+        let value = serde_json::json!({
+            "version": "1.0.0",
+            "signature": 99,
+            "platforms": {
+                "windows-x86_64": {
+                    "signature": "platform-sig"
+                }
+            }
+        });
+        let info = parse_update_manifest(&value).unwrap();
+        // Top-level signature is non-string so falls back to platform.
+        assert_eq!(info.signature, Some("platform-sig".into()));
+    }
+
+    // -----------------------------------------------------------------------
+    // generate_sample_update_manifest
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sample_manifest_has_version_field() {
+        let manifest = generate_sample_update_manifest();
+        assert!(manifest.get("version").is_some());
+        assert_eq!(manifest["version"], "0.2.0");
+    }
+
+    #[test]
+    fn sample_manifest_has_notes_field() {
+        let manifest = generate_sample_update_manifest();
+        assert!(manifest.get("notes").is_some());
+        assert!(manifest["notes"].as_str().unwrap().contains("auto-updater"));
+    }
+
+    #[test]
+    fn sample_manifest_has_pub_date() {
+        let manifest = generate_sample_update_manifest();
+        assert!(manifest.get("pub_date").is_some());
+        assert_eq!(manifest["pub_date"], "2026-07-19T00:00:00Z");
+    }
+
+    #[test]
+    fn sample_manifest_has_top_level_signature() {
+        let manifest = generate_sample_update_manifest();
+        assert_eq!(manifest["signature"], "sample-signature-placeholder");
+    }
+
+    #[test]
+    fn sample_manifest_has_url() {
+        let manifest = generate_sample_update_manifest();
+        assert!(manifest.get("url").is_some());
+        assert!(manifest["url"].as_str().unwrap().contains("OxideLink_0.2.0"));
+    }
+
+    #[test]
+    fn sample_manifest_has_platforms_object() {
+        let manifest = generate_sample_update_manifest();
+        let platforms = manifest.get("platforms").expect("platforms should exist");
+        let win = platforms
+            .get("windows-x86_64")
+            .expect("windows-x86_64 should exist");
+        assert_eq!(win["signature"], "sample-signature-placeholder");
+        assert!(win.get("url").is_some());
+    }
+
+    #[test]
+    fn sample_manifest_platform_and_top_level_signatures_match() {
+        let manifest = generate_sample_update_manifest();
+        let top = manifest["signature"].as_str().unwrap();
+        let plat = manifest["platforms"]["windows-x86_64"]["signature"]
+            .as_str()
+            .unwrap();
+        assert_eq!(top, plat);
+    }
+
+    #[test]
+    fn sample_manifest_version_is_valid_semver() {
+        let manifest = generate_sample_update_manifest();
+        let version = manifest["version"].as_str().unwrap();
+        assert!(semver::Version::parse(version).is_ok());
+    }
+
+    #[test]
+    fn sample_manifest_parsed_date_is_some() {
+        let manifest = generate_sample_update_manifest();
+        let info = parse_update_manifest(&manifest).unwrap();
+        assert_eq!(info.date, Some("2026-07-19T00:00:00Z".into()));
+    }
+
+    #[test]
+    fn sample_manifest_parsed_notes_contain_release_info() {
+        let manifest = generate_sample_update_manifest();
+        let info = parse_update_manifest(&manifest).unwrap();
+        assert!(info.notes.contains("Wave 3"));
+        assert!(info.notes.contains("NSIS"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Combined: manifest + version comparison
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sample_manifest_version_is_newer_than_initial() {
+        let manifest = generate_sample_update_manifest();
+        let info = parse_update_manifest(&manifest).unwrap();
+        assert!(is_update_newer("0.1.0", &info.version).unwrap());
+    }
+
+    #[test]
+    fn sample_manifest_version_is_not_newer_than_itself() {
+        let manifest = generate_sample_update_manifest();
+        let info = parse_update_manifest(&manifest).unwrap();
+        assert!(!is_update_newer(&info.version, &info.version).unwrap());
+    }
 }

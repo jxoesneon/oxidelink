@@ -223,6 +223,10 @@ pub async fn check_bthusb_power_state_async() -> Vec<String> {
 mod tests {
     use super::*;
 
+    /// Serialize tests that touch the process environment so they cannot race
+    /// with each other or with the global `OXIDELINK_SIMULATE_POWER_DOWN` var.
+    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn manager_uses_configured_interval_without_power_events() {
         let status = Arc::new(RwLock::new(KeepAliveStatus {
@@ -231,6 +235,178 @@ mod tests {
         }));
         let manager = KeepAliveManager::new(status);
         assert_eq!(manager.current_interval(), 1_500);
+    }
+
+    #[test]
+    fn keepalive_status_default_values() {
+        let s = KeepAliveStatus::default();
+        assert!(!s.active);
+        assert_eq!(s.interval_ms, 3000);
+        assert_eq!(s.last_ping, 0);
+        assert_eq!(s.power_events_detected, 0);
+        assert!(!s.adapter_sleep_prevented);
+        assert!(s.adaptive_mode);
+    }
+
+    #[test]
+    fn manager_current_interval_reflects_default_status() {
+        let status = Arc::new(RwLock::new(KeepAliveStatus::default()));
+        let manager = KeepAliveManager::new(status);
+        // Default interval_ms is 3000 and no boost has been recorded.
+        assert_eq!(manager.current_interval(), 3000);
+    }
+
+    #[test]
+    fn report_power_event_down_triggers_boost() {
+        let status = Arc::new(RwLock::new(KeepAliveStatus::default()));
+        let manager = KeepAliveManager::new(status.clone());
+
+        manager.report_power_event("BTHUSB_Event_Power_Down");
+
+        let s = status.read();
+        assert_eq!(s.power_events_detected, 1);
+        assert_eq!(s.interval_ms, MIN_INTERVAL_MS);
+        assert!(s.adaptive_mode);
+    }
+
+    #[test]
+    fn report_power_event_lowercase_power_down_triggers_boost() {
+        let status = Arc::new(RwLock::new(KeepAliveStatus::default()));
+        let manager = KeepAliveManager::new(status.clone());
+
+        // The detector accepts both "Power_Down" and "power_down" substrings.
+        manager.report_power_event("something power_down happened");
+
+        let s = status.read();
+        assert_eq!(s.power_events_detected, 1);
+        assert_eq!(s.interval_ms, MIN_INTERVAL_MS);
+        assert!(s.adaptive_mode);
+    }
+
+    #[test]
+    fn report_power_event_non_power_down_increments_count_only() {
+        let status = Arc::new(RwLock::new(KeepAliveStatus {
+            interval_ms: 2_000,
+            adaptive_mode: false,
+            ..KeepAliveStatus::default()
+        }));
+        let manager = KeepAliveManager::new(status.clone());
+
+        manager.report_power_event("BTHUSB_Event_Power_Up");
+
+        let s = status.read();
+        assert_eq!(s.power_events_detected, 1);
+        // Interval and adaptive flag must be untouched by a non-power-down event.
+        assert_eq!(s.interval_ms, 2_000);
+        assert!(!s.adaptive_mode);
+    }
+
+    #[test]
+    fn report_power_event_count_accumulates_across_events() {
+        let status = Arc::new(RwLock::new(KeepAliveStatus::default()));
+        let manager = KeepAliveManager::new(status.clone());
+
+        manager.report_power_event("Power_Up");
+        manager.report_power_event("Power_Up");
+        manager.report_power_event("Power_Down");
+
+        let s = status.read();
+        assert_eq!(s.power_events_detected, 3);
+    }
+
+    #[test]
+    fn report_power_event_rate_limits_rapid_power_downs() {
+        let status = Arc::new(RwLock::new(KeepAliveStatus::default()));
+        let manager = KeepAliveManager::new(status.clone());
+
+        // First power-down arms the boost and sets interval to MIN_INTERVAL_MS.
+        manager.report_power_event("BTHUSB_Event_Power_Down");
+        {
+            let s = status.read();
+            assert_eq!(s.interval_ms, MIN_INTERVAL_MS);
+        }
+
+        // Simulate the system restoring a longer interval between events.
+        {
+            let mut s = status.write();
+            s.interval_ms = 4_000;
+        }
+
+        // A second power-down fired immediately must be rate-limited: the boost
+        // window (BOOST_DURATION_MS) has not elapsed, so the interval must NOT
+        // be reset back to MIN_INTERVAL_MS.
+        manager.report_power_event("BTHUSB_Event_Power_Down");
+        {
+            let s = status.read();
+            assert_eq!(s.interval_ms, 4_000, "rapid power-down should be rate-limited");
+            assert_eq!(s.power_events_detected, 2);
+        }
+    }
+
+    #[test]
+    fn current_interval_after_boost_returns_min_interval() {
+        let status = Arc::new(RwLock::new(KeepAliveStatus::default()));
+        let manager = KeepAliveManager::new(status.clone());
+
+        manager.report_power_event("BTHUSB_Event_Power_Down");
+
+        // Immediately after a boost the interval is the boosted MIN_INTERVAL_MS
+        // and the boost has not expired, so current_interval returns it as-is.
+        assert_eq!(manager.current_interval(), MIN_INTERVAL_MS);
+    }
+
+    #[test]
+    fn current_interval_no_boost_returns_configured() {
+        let status = Arc::new(RwLock::new(KeepAliveStatus {
+            interval_ms: 1_234,
+            ..KeepAliveStatus::default()
+        }));
+        let manager = KeepAliveManager::new(status);
+        // No power event recorded -> last_boost is 0 -> config interval returned.
+        assert_eq!(manager.current_interval(), 1_234);
+    }
+
+    #[test]
+    fn power_event_detection_signature_constants() {
+        // The detector keys on these signature substrings; ensure they are stable.
+        assert!(BTHUSB_POWER_DOWN_SIGNATURE.contains("Power_Down"));
+        assert!(BTHUSB_POWER_UP_SIGNATURE.contains("Power_Up"));
+    }
+
+    #[test]
+    fn adaptive_interval_bounds_are_sane() {
+        assert!(MIN_INTERVAL_MS < MAX_INTERVAL_MS);
+        assert!(BOOST_DURATION_MS > 0);
+    }
+
+    #[test]
+    fn check_bthusb_power_state_simulation_override_emits_event() {
+        // Guard against races on the process environment.
+        let _guard = ENV_GUARD.lock().unwrap();
+        std::env::set_var("OXIDELINK_SIMULATE_POWER_DOWN", "1");
+
+        let events = check_bthusb_power_state();
+
+        std::env::remove_var("OXIDELINK_SIMULATE_POWER_DOWN");
+
+        assert_eq!(events.len(), 1);
+        assert!(
+            events[0].contains(BTHUSB_POWER_DOWN_SIGNATURE),
+            "simulated event should carry the power-down signature: {}",
+            events[0]
+        );
+        assert!(events[0].contains("simulated power-down"));
+    }
+
+    #[test]
+    fn check_bthusb_power_state_no_simulation_returns_empty_or_real() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        // Ensure the override is absent so we exercise the real query path. On a
+        // machine without PowerShell/Bluetooth this may return an empty vec or a
+        // real event list; we only assert the call does not panic and returns a
+        // Vec<String>.
+        std::env::remove_var("OXIDELINK_SIMULATE_POWER_DOWN");
+        let _events = check_bthusb_power_state();
     }
 }
 

@@ -202,3 +202,310 @@ pub fn gyro_recenter(ctx: tauri::State<'_, AppCtx>) -> bool {
     GyroMouseManager::new(ctx.shared.clone()).recenter();
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::imu::ImuPhysical;
+    use crate::kbm::{InputEvent, MockBackend};
+    use crate::state::{GyroMode, StickSide};
+
+    /// Build a `GyroMouse` backed by a [`MockBackend`] and return the receiver
+    /// for asserting on emitted events.
+    fn gyro_with_mock() -> (GyroMouse, tokio::sync::mpsc::UnboundedReceiver<InputEvent>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let gyro = GyroMouse::with_backend(Arc::new(MockBackend::new(tx)));
+        (gyro, rx)
+    }
+
+    fn imu(gyro_x: f32, gyro_y: f32) -> ImuPhysical {
+        ImuPhysical {
+            gyro_x,
+            gyro_y,
+            ..ImuPhysical::default()
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Defaults & state
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn gyro_mouse_default_zero_state() {
+        let (gyro, _rx) = gyro_with_mock();
+        assert_eq!(gyro.stick_output(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn gyro_mapping_default_values() {
+        let g = GyroMapping::default();
+        assert_eq!(g.mode, GyroMode::Off);
+        assert_eq!(g.sensitivity, [1.0, 1.0]);
+        assert_eq!(g.smoothing, 0.0);
+        assert_eq!(g.deadzone, 0.0);
+    }
+
+    #[test]
+    fn recenter_clears_stick_and_accumulators() {
+        let (mut gyro, _rx) = gyro_with_mock();
+        let cfg = GyroMapping {
+            mode: GyroMode::Stick(StickSide::Right),
+            sensitivity: [1.0, 1.0],
+            smoothing: 0.0,
+            deadzone: 0.0,
+        };
+        // Drive a frame so stick output becomes non-zero.
+        gyro.update(&imu(50.0, 50.0), 0.1, &cfg);
+        assert_ne!(gyro.stick_output(), (0.0, 0.0));
+
+        gyro.recenter();
+        assert_eq!(gyro.stick_output(), (0.0, 0.0));
+    }
+
+    // -------------------------------------------------------------------------
+    // update — Off / FlickStick
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn update_off_mode_returns_zero_delta() {
+        let (mut gyro, _rx) = gyro_with_mock();
+        let cfg = GyroMapping::default(); // mode Off
+        let (dx, dy) = gyro.update(&imu(100.0, 100.0), 0.1, &cfg);
+        assert_eq!((dx, dy), (0, 0));
+        assert_eq!(gyro.stick_output(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn update_flickstick_returns_zero_delta() {
+        let (mut gyro, _rx) = gyro_with_mock();
+        let cfg = GyroMapping {
+            mode: GyroMode::FlickStick,
+            sensitivity: [1.0, 1.0],
+            smoothing: 0.0,
+            deadzone: 0.0,
+        };
+        let (dx, dy) = gyro.update(&imu(100.0, 100.0), 0.1, &cfg);
+        assert_eq!((dx, dy), (0, 0));
+    }
+
+    // -------------------------------------------------------------------------
+    // update — Mouse mode
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn update_mouse_mode_deadzone_zeros_small_input() {
+        let (mut gyro, _rx) = gyro_with_mock();
+        let cfg = GyroMapping {
+            mode: GyroMode::Mouse,
+            sensitivity: [1.0, 1.0],
+            smoothing: 0.0,
+            deadzone: 5.0,
+        };
+        // gyro_y=3.0 < deadzone 5.0 -> raw_x zeroed -> no motion.
+        let (dx, dy) = gyro.update(&imu(3.0, 3.0), 1.0, &cfg);
+        assert_eq!((dx, dy), (0, 0));
+    }
+
+    #[test]
+    fn update_mouse_mode_accumulates_and_rounds_to_pixels() {
+        let (mut gyro, _rx) = gyro_with_mock();
+        let cfg = GyroMapping {
+            mode: GyroMode::Mouse,
+            sensitivity: [1.0, 1.0],
+            smoothing: 0.0,
+            deadzone: 0.0,
+        };
+        // raw_x = gyro_y = 10.0; smoothing=0 -> smooth_x=10. accum += 10*1*1 = 10.
+        let (dx, dy) = gyro.update(&imu(0.0, 10.0), 1.0, &cfg);
+        assert_eq!(dx, 10);
+        assert_eq!(dy, 0);
+    }
+
+    #[test]
+    fn update_mouse_mode_sensitivity_scales_output() {
+        let (mut gyro, _rx) = gyro_with_mock();
+        let cfg = GyroMapping {
+            mode: GyroMode::Mouse,
+            sensitivity: [2.0, 3.0],
+            smoothing: 0.0,
+            deadzone: 0.0,
+        };
+        // raw_x = gyro_y = 10 -> smooth 10 -> accum_x += 10*2*1 = 20.
+        // raw_y = -gyro_x = -10 -> smooth -10 -> accum_y += -10*3*1 = -30.
+        let (dx, dy) = gyro.update(&imu(10.0, 10.0), 1.0, &cfg);
+        assert_eq!(dx, 20);
+        assert_eq!(dy, -30);
+    }
+
+    #[test]
+    fn update_mouse_mode_subpixel_accumulation_carries_remainder() {
+        let (mut gyro, _rx) = gyro_with_mock();
+        let cfg = GyroMapping {
+            mode: GyroMode::Mouse,
+            sensitivity: [1.0, 1.0],
+            smoothing: 0.0,
+            deadzone: 0.0,
+        };
+        // gyro_y = 0.4 -> accum_x += 0.4 -> round(0.4)=0, remainder 0.4 carried.
+        let (dx1, _) = gyro.update(&imu(0.0, 0.4), 1.0, &cfg);
+        assert_eq!(dx1, 0);
+        // Second frame: accum = 0.4 + 0.4 = 0.8 -> round(0.8)=1, remainder -0.2.
+        let (dx2, _) = gyro.update(&imu(0.0, 0.4), 1.0, &cfg);
+        assert_eq!(dx2, 1);
+    }
+
+    #[test]
+    fn update_mouse_mode_smoothing_ema_blends_frames() {
+        let (mut gyro, _rx) = gyro_with_mock();
+        let cfg = GyroMapping {
+            mode: GyroMode::Mouse,
+            sensitivity: [1.0, 1.0],
+            smoothing: 0.5,
+            deadzone: 0.0,
+        };
+        // Frame 1: smooth_x = 0.5*0 + 0.5*10 = 5 -> accum += 5*1*1 = 5 -> dx=5.
+        let (dx1, _) = gyro.update(&imu(0.0, 10.0), 1.0, &cfg);
+        assert_eq!(dx1, 5);
+        // Frame 2: smooth_x = 0.5*5 + 0.5*10 = 7.5 -> accum += 7.5 -> dx=8.
+        let (dx2, _) = gyro.update(&imu(0.0, 10.0), 1.0, &cfg);
+        assert_eq!(dx2, 8);
+    }
+
+    #[test]
+    fn update_mouse_mode_smoothing_clamped_to_0_99() {
+        let (mut gyro, _rx) = gyro_with_mock();
+        // smoothing > 0.99 is clamped to 0.99 so the accumulator never freezes.
+        let cfg = GyroMapping {
+            mode: GyroMode::Mouse,
+            sensitivity: [1.0, 1.0],
+            smoothing: 5.0,
+            deadzone: 0.0,
+        };
+        let (dx, _) = gyro.update(&imu(0.0, 100.0), 1.0, &cfg);
+        // smooth_x = 0.99*0 + 0.01*100 = 1.0 -> accum 1.0 -> dx=1.
+        assert_eq!(dx, 1);
+    }
+
+    #[test]
+    fn update_mouse_mode_pitch_inverted() {
+        let (mut gyro, _rx) = gyro_with_mock();
+        let cfg = GyroMapping {
+            mode: GyroMode::Mouse,
+            sensitivity: [1.0, 1.0],
+            smoothing: 0.0,
+            deadzone: 0.0,
+        };
+        // raw_y = -gyro_x. Positive pitch (gyro_x=10) -> negative dy (cursor up).
+        let (_, dy) = gyro.update(&imu(10.0, 0.0), 1.0, &cfg);
+        assert_eq!(dy, -10);
+    }
+
+    // -------------------------------------------------------------------------
+    // update — Stick mode
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn update_stick_mode_returns_zero_delta() {
+        let (mut gyro, _rx) = gyro_with_mock();
+        let cfg = GyroMapping {
+            mode: GyroMode::Stick(StickSide::Right),
+            sensitivity: [1.0, 1.0],
+            smoothing: 0.0,
+            deadzone: 0.0,
+        };
+        let (dx, dy) = gyro.update(&imu(10.0, 10.0), 0.1, &cfg);
+        assert_eq!((dx, dy), (0, 0));
+    }
+
+    #[test]
+    fn update_stick_mode_clamps_to_unit_range() {
+        let (mut gyro, _rx) = gyro_with_mock();
+        let cfg = GyroMapping {
+            mode: GyroMode::Stick(StickSide::Right),
+            sensitivity: [10.0, 10.0],
+            smoothing: 0.0,
+            deadzone: 0.0,
+        };
+        // smooth_x = 10, sx = 10*10 = 100 -> clamped to 1.0.
+        gyro.update(&imu(0.0, 10.0), 0.1, &cfg);
+        let (sx, sy) = gyro.stick_output();
+        assert!((sx - 1.0).abs() < 1e-6, "sx should be clamped to 1.0: {sx}");
+        assert!((sy - 0.0).abs() < 1e-6, "sy should be 0: {sy}");
+    }
+
+    #[test]
+    fn update_stick_mode_right_side_does_not_flip() {
+        let (mut gyro, _rx) = gyro_with_mock();
+        let cfg = GyroMapping {
+            mode: GyroMode::Stick(StickSide::Right),
+            sensitivity: [0.1, 0.1],
+            smoothing: 0.0,
+            deadzone: 0.0,
+        };
+        // raw_x = gyro_y = 10 -> smooth 10 -> sx = 10*0.1 = 1.0 (not flipped).
+        gyro.update(&imu(0.0, 10.0), 0.1, &cfg);
+        let (sx, _sy) = gyro.stick_output();
+        assert!((sx - 1.0).abs() < 1e-6, "right stick should not flip: {sx}");
+    }
+
+    #[test]
+    fn update_stick_mode_left_side_flips_both_axes() {
+        let (mut gyro, _rx) = gyro_with_mock();
+        let cfg = GyroMapping {
+            mode: GyroMode::Stick(StickSide::Left),
+            sensitivity: [0.1, 0.1],
+            smoothing: 0.0,
+            deadzone: 0.0,
+        };
+        // raw_x = gyro_y = 10 -> smooth 10 -> sx = 1.0, flipped to -1.0.
+        // raw_y = -gyro_x = -10 -> smooth -10 -> sy = -1.0, flipped to 1.0.
+        gyro.update(&imu(10.0, 10.0), 0.1, &cfg);
+        let (sx, sy) = gyro.stick_output();
+        assert!((sx - (-1.0)).abs() < 1e-6, "left stick x should be flipped: {sx}");
+        assert!((sy - 1.0).abs() < 1e-6, "left stick y should be flipped: {sy}");
+    }
+
+    #[test]
+    fn stick_output_zero_until_stick_mode_frame() {
+        let (mut gyro, _rx) = gyro_with_mock();
+        // Off mode must not populate stick output.
+        let cfg_off = GyroMapping::default();
+        gyro.update(&imu(50.0, 50.0), 0.1, &cfg_off);
+        assert_eq!(gyro.stick_output(), (0.0, 0.0));
+
+        // Switching to stick mode populates it.
+        let cfg_stick = GyroMapping {
+            mode: GyroMode::Stick(StickSide::Right),
+            sensitivity: [0.1, 0.1],
+            smoothing: 0.0,
+            deadzone: 0.0,
+        };
+        gyro.update(&imu(0.0, 50.0), 0.1, &cfg_stick);
+        assert_ne!(gyro.stick_output(), (0.0, 0.0));
+    }
+
+    // -------------------------------------------------------------------------
+    // send_mouse_move backend integration
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn send_mouse_move_emits_event_via_backend() {
+        let (gyro, mut rx) = gyro_with_mock();
+        gyro.send_mouse_move(7, -4);
+        match rx.try_recv() {
+            Ok(InputEvent::MouseMove { dx, dy }) => {
+                assert_eq!(dx, 7);
+                assert_eq!(dy, -4);
+            }
+            other => panic!("expected MouseMove event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn send_mouse_move_no_panic_when_channel_dropped() {
+        let (gyro, rx) = gyro_with_mock();
+        drop(rx);
+        // Dropping the receiver must not panic the sender.
+        gyro.send_mouse_move(1, 1);
+    }
+}

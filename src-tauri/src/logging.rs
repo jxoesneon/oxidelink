@@ -349,4 +349,393 @@ mod tests {
         assert_eq!(limited[0].message, "goodbye moon");
         assert_eq!(limited[1].message, "debug info");
     }
+
+    // -----------------------------------------------------------------
+    //  Level helper round-trip tests
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn level_filter_to_u8_all_variants() {
+        assert_eq!(level_filter_to_u8(LevelFilter::Off), 0);
+        assert_eq!(level_filter_to_u8(LevelFilter::Error), 1);
+        assert_eq!(level_filter_to_u8(LevelFilter::Warn), 2);
+        assert_eq!(level_filter_to_u8(LevelFilter::Info), 3);
+        assert_eq!(level_filter_to_u8(LevelFilter::Debug), 4);
+        assert_eq!(level_filter_to_u8(LevelFilter::Trace), 5);
+    }
+
+    #[test]
+    fn u8_to_level_filter_all_variants() {
+        assert_eq!(u8_to_level_filter(0), LevelFilter::Off);
+        assert_eq!(u8_to_level_filter(1), LevelFilter::Error);
+        assert_eq!(u8_to_level_filter(2), LevelFilter::Warn);
+        assert_eq!(u8_to_level_filter(3), LevelFilter::Info);
+        assert_eq!(u8_to_level_filter(4), LevelFilter::Debug);
+        assert_eq!(u8_to_level_filter(5), LevelFilter::Trace);
+    }
+
+    #[test]
+    fn u8_to_level_filter_above_max_clamps_to_trace() {
+        assert_eq!(u8_to_level_filter(255), LevelFilter::Trace);
+        assert_eq!(u8_to_level_filter(6), LevelFilter::Trace);
+        assert_eq!(u8_to_level_filter(100), LevelFilter::Trace);
+    }
+
+    #[test]
+    fn level_to_u8_all_variants() {
+        assert_eq!(level_to_u8(Level::Error), 1);
+        assert_eq!(level_to_u8(Level::Warn), 2);
+        assert_eq!(level_to_u8(Level::Info), 3);
+        assert_eq!(level_to_u8(Level::Debug), 4);
+        assert_eq!(level_to_u8(Level::Trace), 5);
+    }
+
+    #[test]
+    fn level_filter_roundtrip() {
+        for level in [
+            LevelFilter::Off,
+            LevelFilter::Error,
+            LevelFilter::Warn,
+            LevelFilter::Info,
+            LevelFilter::Debug,
+            LevelFilter::Trace,
+        ] {
+            let encoded = level_filter_to_u8(level);
+            let decoded = u8_to_level_filter(encoded);
+            assert_eq!(decoded, level);
+        }
+    }
+
+    // -----------------------------------------------------------------
+    //  LogConfig defaults
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn log_config_default_values() {
+        let config = LogConfig::default();
+        assert_eq!(config.level, "info");
+        assert_eq!(config.max_lines, 1000);
+        assert!(config.ring_buffer);
+        assert!(!config.log_file);
+    }
+
+    #[test]
+    fn default_capacity_constant() {
+        assert_eq!(DEFAULT_CAPACITY, 1000);
+    }
+
+    // -----------------------------------------------------------------
+    //  LogCollector max_level / set_level
+    // -----------------------------------------------------------------
+
+    /// Guard to serialize tests that call `set_level` (which touches the
+    /// global `log::set_max_level`).
+    static LEVEL_GUARD: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn log_collector_max_level_reflects_config() {
+        let config = LogConfig::default();
+        let collector = LogCollector::new(&config, LevelFilter::Warn).unwrap();
+        assert_eq!(collector.max_level(), LevelFilter::Warn);
+    }
+
+    #[test]
+    fn log_collector_set_level_valid() {
+        let _guard = LEVEL_GUARD.lock().expect("level guard poisoned");
+        let config = LogConfig::default();
+        let collector = LogCollector::new(&config, LevelFilter::Off).unwrap();
+        assert_eq!(collector.max_level(), LevelFilter::Off);
+
+        assert!(collector.set_level("error").is_ok());
+        assert_eq!(collector.max_level(), LevelFilter::Error);
+
+        assert!(collector.set_level("warn").is_ok());
+        assert_eq!(collector.max_level(), LevelFilter::Warn);
+
+        assert!(collector.set_level("trace").is_ok());
+        assert_eq!(collector.max_level(), LevelFilter::Trace);
+    }
+
+    #[test]
+    fn log_collector_set_level_case_insensitive() {
+        let _guard = LEVEL_GUARD.lock().expect("level guard poisoned");
+        let config = LogConfig::default();
+        let collector = LogCollector::new(&config, LevelFilter::Off).unwrap();
+        assert!(collector.set_level("INFO").is_ok());
+        assert_eq!(collector.max_level(), LevelFilter::Info);
+        assert!(collector.set_level("Debug").is_ok());
+        assert_eq!(collector.max_level(), LevelFilter::Debug);
+    }
+
+    #[test]
+    fn log_collector_set_level_invalid() {
+        let config = LogConfig::default();
+        let collector = LogCollector::new(&config, LevelFilter::Info).unwrap();
+        assert!(collector.set_level("verbose").is_err());
+        assert!(collector.set_level("").is_err());
+        assert!(collector.set_level("not-a-level").is_err());
+        // Level should remain unchanged after a failed set
+        assert_eq!(collector.max_level(), LevelFilter::Info);
+    }
+
+    // -----------------------------------------------------------------
+    //  Ring buffer operations
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn log_collector_clear_empties_ring() {
+        let config = LogConfig::default();
+        let collector = LogCollector::new(&config, LevelFilter::Debug).unwrap();
+        collector.append(AppLogEntry {
+            timestamp: 0,
+            level: "info".into(),
+            target: "test".into(),
+            message: "hello".into(),
+        });
+        assert_eq!(collector.recent(None, None, None).len(), 1);
+        collector.clear();
+        assert_eq!(collector.recent(None, None, None).len(), 0);
+    }
+
+    #[test]
+    fn log_collector_ring_buffer_eviction() {
+        let config = LogConfig {
+            max_lines: 3,
+            ..LogConfig::default()
+        };
+        let collector = LogCollector::new(&config, LevelFilter::Debug).unwrap();
+
+        for i in 0..5 {
+            collector.append(AppLogEntry {
+                timestamp: i,
+                level: "info".into(),
+                target: "test".into(),
+                message: format!("msg {}", i),
+            });
+        }
+
+        let entries = collector.recent(None, None, None);
+        assert_eq!(entries.len(), 3, "should only keep max_lines entries");
+        // Oldest entries evicted; remaining are msg 2, 3, 4 in order
+        assert_eq!(entries[0].message, "msg 2");
+        assert_eq!(entries[1].message, "msg 3");
+        assert_eq!(entries[2].message, "msg 4");
+    }
+
+    #[test]
+    fn log_collector_ring_buffer_exact_capacity() {
+        let config = LogConfig {
+            max_lines: 3,
+            ..LogConfig::default()
+        };
+        let collector = LogCollector::new(&config, LevelFilter::Debug).unwrap();
+
+        for i in 0..3 {
+            collector.append(AppLogEntry {
+                timestamp: i,
+                level: "info".into(),
+                target: "test".into(),
+                message: format!("msg {}", i),
+            });
+        }
+
+        let entries = collector.recent(None, None, None);
+        assert_eq!(entries.len(), 3, "should keep all 3 entries");
+        assert_eq!(entries[0].message, "msg 0");
+        assert_eq!(entries[2].message, "msg 2");
+    }
+
+    // -----------------------------------------------------------------
+    //  recent() filter tests
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn recent_level_filter_case_insensitive() {
+        let config = LogConfig::default();
+        let collector = LogCollector::new(&config, LevelFilter::Debug).unwrap();
+        collector.append(AppLogEntry {
+            timestamp: 0,
+            level: "info".into(),
+            target: "test".into(),
+            message: "hello".into(),
+        });
+        assert_eq!(
+            collector.recent(Some("INFO".into()), None, None).len(),
+            1
+        );
+        assert_eq!(
+            collector.recent(Some("Info".into()), None, None).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn recent_search_case_insensitive() {
+        let config = LogConfig::default();
+        let collector = LogCollector::new(&config, LevelFilter::Debug).unwrap();
+        collector.append(AppLogEntry {
+            timestamp: 0,
+            level: "info".into(),
+            target: "MyModule".into(),
+            message: "Hello World".into(),
+        });
+        assert_eq!(collector.recent(None, Some("hello".into()), None).len(), 1);
+        assert_eq!(collector.recent(None, Some("WORLD".into()), None).len(), 1);
+        assert_eq!(
+            collector.recent(None, Some("mymodule".into()), None).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn recent_search_no_match() {
+        let config = LogConfig::default();
+        let collector = LogCollector::new(&config, LevelFilter::Debug).unwrap();
+        collector.append(AppLogEntry {
+            timestamp: 0,
+            level: "info".into(),
+            target: "test".into(),
+            message: "hello".into(),
+        });
+        assert_eq!(
+            collector.recent(None, Some("nonexistent".into()), None).len(),
+            0
+        );
+    }
+
+    #[test]
+    fn recent_limit_one() {
+        let config = LogConfig::default();
+        let collector = LogCollector::new(&config, LevelFilter::Debug).unwrap();
+        collector.append(AppLogEntry {
+            timestamp: 0,
+            level: "info".into(),
+            target: "test".into(),
+            message: "first".into(),
+        });
+        collector.append(AppLogEntry {
+            timestamp: 1,
+            level: "info".into(),
+            target: "test".into(),
+            message: "second".into(),
+        });
+        // limit=1 should return only the most recent entry
+        let result = collector.recent(None, None, Some(1));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].message, "second");
+    }
+
+    #[test]
+    fn recent_chronological_order() {
+        let config = LogConfig::default();
+        let collector = LogCollector::new(&config, LevelFilter::Debug).unwrap();
+        for i in 0..3 {
+            collector.append(AppLogEntry {
+                timestamp: i,
+                level: "info".into(),
+                target: "test".into(),
+                message: format!("msg {}", i),
+            });
+        }
+        let result = collector.recent(None, None, None);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].message, "msg 0");
+        assert_eq!(result[1].message, "msg 1");
+        assert_eq!(result[2].message, "msg 2");
+    }
+
+    #[test]
+    fn recent_combined_level_and_search() {
+        let config = LogConfig::default();
+        let collector = LogCollector::new(&config, LevelFilter::Debug).unwrap();
+        collector.append(AppLogEntry {
+            timestamp: 0,
+            level: "info".into(),
+            target: "mod_a".into(),
+            message: "hello".into(),
+        });
+        collector.append(AppLogEntry {
+            timestamp: 1,
+            level: "warn".into(),
+            target: "mod_b".into(),
+            message: "hello".into(),
+        });
+        // Both match "hello" but only one is "warn"
+        let result = collector.recent(Some("warn".into()), Some("hello".into()), None);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].level, "warn");
+    }
+
+    #[test]
+    fn recent_empty_ring() {
+        let config = LogConfig::default();
+        let collector = LogCollector::new(&config, LevelFilter::Debug).unwrap();
+        assert_eq!(collector.recent(None, None, None).len(), 0);
+    }
+
+    // -----------------------------------------------------------------
+    //  set_event_sender / clone
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn log_collector_set_event_sender_none_ok() {
+        let config = LogConfig::default();
+        let collector = LogCollector::new(&config, LevelFilter::Info).unwrap();
+        collector.set_event_sender(None);
+        // Should not panic
+    }
+
+    #[test]
+    fn log_collector_clone_shares_state() {
+        let config = LogConfig::default();
+        let collector = LogCollector::new(&config, LevelFilter::Debug).unwrap();
+        let cloned = collector.clone();
+        collector.append(AppLogEntry {
+            timestamp: 0,
+            level: "info".into(),
+            target: "test".into(),
+            message: "shared".into(),
+        });
+        // Clone should see the same entry (Arc-based inner)
+        let result = cloned.recent(None, None, None);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].message, "shared");
+    }
+
+    // -----------------------------------------------------------------
+    //  Log trait enabled()
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn log_collector_enabled_respects_filter() {
+        let config = LogConfig::default();
+        let collector = LogCollector::new(&config, LevelFilter::Warn).unwrap();
+        // Warn filter: Error and Warn enabled, Info/Debug/Trace disabled
+        let md_err = log::Metadata::builder().level(Level::Error).build();
+        assert!(collector.enabled(&md_err));
+        let md_warn = log::Metadata::builder().level(Level::Warn).build();
+        assert!(collector.enabled(&md_warn));
+        let md_info = log::Metadata::builder().level(Level::Info).build();
+        assert!(!collector.enabled(&md_info));
+        let md_debug = log::Metadata::builder().level(Level::Debug).build();
+        assert!(!collector.enabled(&md_debug));
+    }
+
+    #[test]
+    fn log_collector_enabled_off_filter() {
+        let config = LogConfig::default();
+        let collector = LogCollector::new(&config, LevelFilter::Off).unwrap();
+        let md = log::Metadata::builder().level(Level::Error).build();
+        assert!(!collector.enabled(&md), "Off filter should disable all");
+    }
+
+    #[test]
+    fn log_collector_enabled_trace_filter() {
+        let config = LogConfig::default();
+        let collector = LogCollector::new(&config, LevelFilter::Trace).unwrap();
+        let md = log::Metadata::builder().level(Level::Trace).build();
+        assert!(collector.enabled(&md));
+        let md = log::Metadata::builder().level(Level::Error).build();
+        assert!(collector.enabled(&md));
+    }
 }

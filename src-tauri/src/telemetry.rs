@@ -247,3 +247,742 @@ impl TelemetryExtractor {
             .unwrap_or(false)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{
+        AppConfig, ConnectionQuality, DeviceInfo, HomeLight, PlayerLights, RemapConfig,
+        StickCalibration,
+    };
+
+    // -----------------------------------------------------------------------
+    //  check_battery_warning
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn battery_warning_false_when_zero_percent() {
+        let state = ControllerState::default();
+        assert!(!TelemetryExtractor::check_battery_warning(&state, 15));
+    }
+
+    #[test]
+    fn battery_warning_true_when_below_threshold_and_not_charging() {
+        let mut state = ControllerState::default();
+        state.battery_percent = 10;
+        state.charging = false;
+        assert!(TelemetryExtractor::check_battery_warning(&state, 15));
+    }
+
+    #[test]
+    fn battery_warning_true_when_exactly_at_threshold() {
+        let mut state = ControllerState::default();
+        state.battery_percent = 15;
+        state.charging = false;
+        assert!(TelemetryExtractor::check_battery_warning(&state, 15));
+    }
+
+    #[test]
+    fn battery_warning_false_when_above_threshold() {
+        let mut state = ControllerState::default();
+        state.battery_percent = 20;
+        state.charging = false;
+        assert!(!TelemetryExtractor::check_battery_warning(&state, 15));
+    }
+
+    #[test]
+    fn battery_warning_false_when_charging() {
+        let mut state = ControllerState::default();
+        state.battery_percent = 5;
+        state.charging = true;
+        assert!(!TelemetryExtractor::check_battery_warning(&state, 15));
+    }
+
+    #[test]
+    fn battery_warning_false_when_high_battery() {
+        let mut state = ControllerState::default();
+        state.battery_percent = 100;
+        state.charging = false;
+        assert!(!TelemetryExtractor::check_battery_warning(&state, 15));
+    }
+
+    // -----------------------------------------------------------------------
+    //  update_signal_strength
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn update_signal_strength_sets_value() {
+        let mut state = ControllerState::default();
+        TelemetryExtractor::update_signal_strength(&mut state, -42);
+        assert_eq!(state.signal_strength, -42);
+    }
+
+    #[test]
+    fn update_signal_strength_zero() {
+        let mut state = ControllerState::default();
+        TelemetryExtractor::update_signal_strength(&mut state, 0);
+        assert_eq!(state.signal_strength, 0);
+    }
+
+    #[test]
+    fn update_signal_strength_max_positive() {
+        let mut state = ControllerState::default();
+        TelemetryExtractor::update_signal_strength(&mut state, 127);
+        assert_eq!(state.signal_strength, 127);
+    }
+
+    #[test]
+    fn update_signal_strength_max_negative() {
+        let mut state = ControllerState::default();
+        TelemetryExtractor::update_signal_strength(&mut state, -128);
+        assert_eq!(state.signal_strength, -128);
+    }
+
+    // -----------------------------------------------------------------------
+    //  apply_deadzone / apply_deadzone_with_shape
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn apply_deadzone_zeros_small_input() {
+        let mut stick = StickState {
+            x: 0.05,
+            y: 0.03,
+            ..Default::default()
+        };
+        TelemetryExtractor::apply_deadzone(&mut stick, 0.1);
+        assert_eq!(stick.x, 0.0);
+        assert_eq!(stick.y, 0.0);
+    }
+
+    #[test]
+    fn apply_deadzone_preserves_large_input() {
+        let mut stick = StickState {
+            x: 0.5,
+            y: 0.5,
+            ..Default::default()
+        };
+        TelemetryExtractor::apply_deadzone(&mut stick, 0.1);
+        // After radial deadzone, values should be scaled but non-zero.
+        assert!(stick.x > 0.0);
+        assert!(stick.y > 0.0);
+    }
+
+    #[test]
+    fn apply_deadzone_with_shape_axial() {
+        let mut stick = StickState {
+            x: 0.05,
+            y: 0.5,
+            ..Default::default()
+        };
+        TelemetryExtractor::apply_deadzone_with_shape(&mut stick, 0.1, "axial");
+        assert_eq!(stick.x, 0.0);
+        assert!(stick.y > 0.0);
+    }
+
+    #[test]
+    fn apply_deadzone_with_shape_unknown_defaults_to_radial() {
+        let mut stick = StickState {
+            x: 0.05,
+            y: 0.05,
+            ..Default::default()
+        };
+        TelemetryExtractor::apply_deadzone_with_shape(&mut stick, 0.1, "unknown");
+        assert_eq!(stick.x, 0.0);
+        assert_eq!(stick.y, 0.0);
+    }
+
+    #[test]
+    fn apply_deadzone_zero_deadzone_passthrough() {
+        let mut stick = StickState {
+            x: 0.5,
+            y: 0.5,
+            ..Default::default()
+        };
+        TelemetryExtractor::apply_deadzone(&mut stick, 0.0);
+        // With zero deadzone, radial shape still scales by (m-0)/(1-0) = m,
+        // then divides by m, so values are unchanged.
+        let m = (0.5_f32 * 0.5 + 0.5 * 0.5).sqrt();
+        let scale = (m / (1.0 - 0.0)).clamp(0.0, 1.0) / m;
+        assert!((stick.x - 0.5 * scale).abs() < 1e-5);
+        assert!((stick.y - 0.5 * scale).abs() < 1e-5);
+    }
+
+    // -----------------------------------------------------------------------
+    //  apply_remap / remap_button
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn apply_remap_swaps_a_and_b() {
+        let mut buttons = ButtonState::default();
+        buttons.a = true;
+        buttons.b = false;
+        let remap = RemapConfig {
+            a_to: "b".into(),
+            b_to: "a".into(),
+            x_to: "x".into(),
+            y_to: "y".into(),
+        };
+        TelemetryExtractor::apply_remap(&mut buttons, &remap);
+        // After remap: a should get original.b (false), b should get original.a (true)
+        assert!(!buttons.a);
+        assert!(buttons.b);
+    }
+
+    #[test]
+    fn apply_remap_swaps_x_and_y() {
+        let mut buttons = ButtonState::default();
+        buttons.x = true;
+        buttons.y = false;
+        let remap = RemapConfig {
+            a_to: "a".into(),
+            b_to: "b".into(),
+            x_to: "y".into(),
+            y_to: "x".into(),
+        };
+        TelemetryExtractor::apply_remap(&mut buttons, &remap);
+        assert!(!buttons.x);
+        assert!(buttons.y);
+    }
+
+    #[test]
+    fn apply_remap_to_l_trigger() {
+        let mut buttons = ButtonState::default();
+        buttons.l = true;
+        let remap = RemapConfig {
+            a_to: "l".into(),
+            b_to: "b".into(),
+            x_to: "x".into(),
+            y_to: "y".into(),
+        };
+        TelemetryExtractor::apply_remap(&mut buttons, &remap);
+        assert!(buttons.a);
+    }
+
+    #[test]
+    fn apply_remap_to_zl_trigger() {
+        let mut buttons = ButtonState::default();
+        buttons.zl = true;
+        let remap = RemapConfig {
+            a_to: "a".into(),
+            b_to: "zl".into(),
+            x_to: "x".into(),
+            y_to: "y".into(),
+        };
+        TelemetryExtractor::apply_remap(&mut buttons, &remap);
+        assert!(buttons.b);
+    }
+
+    #[test]
+    fn apply_remap_to_r_trigger() {
+        let mut buttons = ButtonState::default();
+        buttons.r = true;
+        let remap = RemapConfig {
+            a_to: "a".into(),
+            b_to: "b".into(),
+            x_to: "r".into(),
+            y_to: "y".into(),
+        };
+        TelemetryExtractor::apply_remap(&mut buttons, &remap);
+        assert!(buttons.x);
+    }
+
+    #[test]
+    fn apply_remap_to_zr_trigger() {
+        let mut buttons = ButtonState::default();
+        buttons.zr = true;
+        let remap = RemapConfig {
+            a_to: "a".into(),
+            b_to: "b".into(),
+            x_to: "x".into(),
+            y_to: "zr".into(),
+        };
+        TelemetryExtractor::apply_remap(&mut buttons, &remap);
+        assert!(buttons.y);
+    }
+
+    #[test]
+    fn apply_remap_to_minus() {
+        let mut buttons = ButtonState::default();
+        buttons.minus = true;
+        let remap = RemapConfig {
+            a_to: "minus".into(),
+            b_to: "b".into(),
+            x_to: "x".into(),
+            y_to: "y".into(),
+        };
+        TelemetryExtractor::apply_remap(&mut buttons, &remap);
+        assert!(buttons.a);
+    }
+
+    #[test]
+    fn apply_remap_to_plus() {
+        let mut buttons = ButtonState::default();
+        buttons.plus = true;
+        let remap = RemapConfig {
+            a_to: "a".into(),
+            b_to: "plus".into(),
+            x_to: "x".into(),
+            y_to: "y".into(),
+        };
+        TelemetryExtractor::apply_remap(&mut buttons, &remap);
+        assert!(buttons.b);
+    }
+
+    #[test]
+    fn apply_remap_to_home() {
+        let mut buttons = ButtonState::default();
+        buttons.home = true;
+        let remap = RemapConfig {
+            a_to: "home".into(),
+            b_to: "b".into(),
+            x_to: "x".into(),
+            y_to: "y".into(),
+        };
+        TelemetryExtractor::apply_remap(&mut buttons, &remap);
+        assert!(buttons.a);
+    }
+
+    #[test]
+    fn apply_remap_to_capture() {
+        let mut buttons = ButtonState::default();
+        buttons.capture = true;
+        let remap = RemapConfig {
+            a_to: "a".into(),
+            b_to: "capture".into(),
+            x_to: "x".into(),
+            y_to: "y".into(),
+        };
+        TelemetryExtractor::apply_remap(&mut buttons, &remap);
+        assert!(buttons.b);
+    }
+
+    #[test]
+    fn apply_remap_unknown_target_yields_false() {
+        let mut buttons = ButtonState::default();
+        buttons.a = true;
+        let remap = RemapConfig {
+            a_to: "nonexistent".into(),
+            b_to: "b".into(),
+            x_to: "x".into(),
+            y_to: "y".into(),
+        };
+        TelemetryExtractor::apply_remap(&mut buttons, &remap);
+        assert!(!buttons.a);
+    }
+
+    #[test]
+    fn apply_remap_case_insensitive_target() {
+        let mut buttons = ButtonState::default();
+        buttons.a = true;
+        let remap = RemapConfig {
+            a_to: "A".into(),
+            b_to: "b".into(),
+            x_to: "x".into(),
+            y_to: "y".into(),
+        };
+        TelemetryExtractor::apply_remap(&mut buttons, &remap);
+        assert!(buttons.a);
+    }
+
+    #[test]
+    fn apply_remap_no_source_pressed() {
+        let buttons = ButtonState::default();
+        let mut buttons = buttons;
+        let remap = RemapConfig {
+            a_to: "b".into(),
+            b_to: "a".into(),
+            x_to: "y".into(),
+            y_to: "x".into(),
+        };
+        TelemetryExtractor::apply_remap(&mut buttons, &remap);
+        assert!(!buttons.a);
+        assert!(!buttons.b);
+        assert!(!buttons.x);
+        assert!(!buttons.y);
+    }
+
+    // -----------------------------------------------------------------------
+    //  apply_stick_calibration
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn apply_stick_calibration_center_returns_zero() {
+        let cal = StickCalibration {
+            left_center_x: 2048,
+            left_center_y: 2048,
+            left_min_x: 512,
+            left_min_y: 512,
+            left_max_x: 3584,
+            left_max_y: 3584,
+            ..Default::default()
+        };
+        let (x, y) = TelemetryExtractor::apply_stick_calibration(2048, 2048, &cal, true);
+        assert!((x - 0.0).abs() < 1e-5);
+        assert!((y - 0.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn apply_stick_calibration_max_returns_one() {
+        let cal = StickCalibration {
+            left_center_x: 2048,
+            left_center_y: 2048,
+            left_min_x: 512,
+            left_min_y: 512,
+            left_max_x: 3584,
+            left_max_y: 3584,
+            ..Default::default()
+        };
+        let (x, y) = TelemetryExtractor::apply_stick_calibration(3584, 3584, &cal, true);
+        assert!((x - 1.0).abs() < 1e-5);
+        assert!((y - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn apply_stick_calibration_min_returns_negative_one() {
+        let cal = StickCalibration {
+            left_center_x: 2048,
+            left_center_y: 2048,
+            left_min_x: 512,
+            left_min_y: 512,
+            left_max_x: 3584,
+            left_max_y: 3584,
+            ..Default::default()
+        };
+        let (x, y) = TelemetryExtractor::apply_stick_calibration(512, 512, &cal, true);
+        assert!((x - (-1.0)).abs() < 1e-5);
+        assert!((y - (-1.0)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn apply_stick_calibration_right_stick_uses_right_values() {
+        let cal = StickCalibration {
+            right_center_x: 2000,
+            right_center_y: 2000,
+            right_min_x: 500,
+            right_min_y: 500,
+            right_max_x: 3500,
+            right_max_y: 3500,
+            ..Default::default()
+        };
+        let (x, y) = TelemetryExtractor::apply_stick_calibration(3500, 500, &cal, false);
+        assert!((x - 1.0).abs() < 1e-5);
+        assert!((y - (-1.0)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn apply_stick_calibration_clamps_beyond_max() {
+        let cal = StickCalibration {
+            left_center_x: 2048,
+            left_center_y: 2048,
+            left_min_x: 512,
+            left_min_y: 512,
+            left_max_x: 3584,
+            left_max_y: 3584,
+            ..Default::default()
+        };
+        let (x, y) = TelemetryExtractor::apply_stick_calibration(65535, 0, &cal, true);
+        assert!((x - 1.0).abs() < 1e-5);
+        assert!((y - (-1.0)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn apply_stick_calibration_zero_range_returns_zero() {
+        let cal = StickCalibration {
+            left_center_x: 2048,
+            left_center_y: 2048,
+            left_min_x: 2048,
+            left_min_y: 2048,
+            left_max_x: 2048,
+            left_max_y: 2048,
+            ..Default::default()
+        };
+        let (x, y) = TelemetryExtractor::apply_stick_calibration(3000, 1000, &cal, true);
+        assert!((x - 0.0).abs() < 1e-5);
+        assert!((y - 0.0).abs() < 1e-5);
+    }
+
+    // -----------------------------------------------------------------------
+    //  update_connection_quality
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn connection_quality_first_report_no_latency() {
+        let mut state = ControllerState::default();
+        state.connection_quality.last_report_timer = 0;
+        TelemetryExtractor::update_connection_quality(&mut state, 10);
+        // First report (last_report_timer was 0) should not compute latency.
+        assert_eq!(state.connection_quality.latency_ms, 0.0);
+        assert_eq!(state.connection_quality.last_report_timer, 10);
+    }
+
+    #[test]
+    fn connection_quality_imu_enabled_expected_gap_two() {
+        let mut state = ControllerState::default();
+        state.imu_enabled = true;
+        state.connection_quality.last_report_timer = 10;
+        TelemetryExtractor::update_connection_quality(&mut state, 12);
+        // gap=2, expected_gap=2.0, latency = (2/2)*8.33 = 8.33
+        assert!((state.connection_quality.latency_ms - 8.33).abs() < 0.01);
+        // rate = 1000/8.33 ≈ 120
+        assert_eq!(state.connection_quality.report_rate_hz, (1000.0 / 8.33) as u16);
+    }
+
+    #[test]
+    fn connection_quality_imu_disabled_expected_gap_four() {
+        let mut state = ControllerState::default();
+        state.imu_enabled = false;
+        state.connection_quality.last_report_timer = 10;
+        TelemetryExtractor::update_connection_quality(&mut state, 14);
+        // gap=4, expected_gap=4.0, latency = (4/4)*8.33 = 8.33
+        assert!((state.connection_quality.latency_ms - 8.33).abs() < 0.01);
+    }
+
+    #[test]
+    fn connection_quality_timer_wraparound() {
+        let mut state = ControllerState::default();
+        state.imu_enabled = true;
+        state.connection_quality.last_report_timer = 255;
+        TelemetryExtractor::update_connection_quality(&mut state, 1);
+        // gap = (256 - 255) + 1 = 2, expected_gap=2.0, latency = 8.33
+        assert!((state.connection_quality.latency_ms - 8.33).abs() < 0.01);
+    }
+
+    #[test]
+    fn connection_quality_ema_smoothing() {
+        let mut state = ControllerState::default();
+        state.imu_enabled = true;
+        state.connection_quality.last_report_timer = 10;
+        state.connection_quality.latency_ms = 10.0;
+        // gap=2, latency=8.33, EMA: 10.0*0.9 + 8.33*0.1 = 9.833
+        TelemetryExtractor::update_connection_quality(&mut state, 12);
+        let expected = 10.0 * 0.9 + 8.33 * 0.1;
+        assert!((state.connection_quality.latency_ms - expected).abs() < 0.01);
+    }
+
+    #[test]
+    fn connection_quality_large_gap_lower_rate() {
+        let mut state = ControllerState::default();
+        state.imu_enabled = true;
+        state.connection_quality.last_report_timer = 10;
+        // gap=10, expected_gap=2.0, latency = (10/2)*8.33 = 41.65
+        TelemetryExtractor::update_connection_quality(&mut state, 20);
+        assert!((state.connection_quality.latency_ms - 41.65).abs() < 0.01);
+        // rate = 1000/41.65 ≈ 24
+        assert_eq!(state.connection_quality.report_rate_hz, (1000.0 / 41.65) as u16);
+    }
+
+    // -----------------------------------------------------------------------
+    //  update_from_device_info
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn update_from_device_info_sets_state() {
+        let mut state = ControllerState::default();
+        let info = DeviceInfo {
+            firmware_version: "2.0".into(),
+            controller_type: 1,
+            mac_address: "AA:BB:CC:DD:EE:FF".into(),
+            colors_from_spi: true,
+            connection: "Bluetooth".into(),
+            spi: None,
+        };
+        TelemetryExtractor::update_from_device_info(&mut state, info.clone());
+        assert!(state.device_info.is_some());
+        let di = state.device_info.as_ref().unwrap();
+        assert_eq!(di.firmware_version, "2.0");
+        assert_eq!(di.controller_type, 1);
+        assert_eq!(di.mac_address, "AA:BB:CC:DD:EE:FF");
+        assert!(di.colors_from_spi);
+        assert_eq!(di.connection, "Bluetooth");
+    }
+
+    #[test]
+    fn update_from_device_info_overwrites_previous() {
+        let mut state = ControllerState::default();
+        let info1 = DeviceInfo {
+            firmware_version: "1.0".into(),
+            ..Default::default()
+        };
+        TelemetryExtractor::update_from_device_info(&mut state, info1);
+        let info2 = DeviceInfo {
+            firmware_version: "3.0".into(),
+            ..Default::default()
+        };
+        TelemetryExtractor::update_from_device_info(&mut state, info2);
+        assert_eq!(
+            state.device_info.as_ref().unwrap().firmware_version,
+            "3.0"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    //  update_from_calibration
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn update_from_calibration_sets_state() {
+        let mut state = ControllerState::default();
+        let cal = StickCalibration {
+            left_center_x: 2048,
+            valid: true,
+            ..Default::default()
+        };
+        TelemetryExtractor::update_from_calibration(&mut state, cal.clone());
+        assert!(state.stick_calibration.is_some());
+        assert!(state.stick_calibration.as_ref().unwrap().valid);
+        assert_eq!(
+            state.stick_calibration.as_ref().unwrap().left_center_x,
+            2048
+        );
+    }
+
+    #[test]
+    fn update_from_calibration_overwrites_previous() {
+        let mut state = ControllerState::default();
+        let cal1 = StickCalibration {
+            source: "factory".into(),
+            ..Default::default()
+        };
+        TelemetryExtractor::update_from_calibration(&mut state, cal1);
+        let cal2 = StickCalibration {
+            source: "user".into(),
+            ..Default::default()
+        };
+        TelemetryExtractor::update_from_calibration(&mut state, cal2);
+        assert_eq!(state.stick_calibration.as_ref().unwrap().source, "user");
+    }
+
+    // -----------------------------------------------------------------------
+    //  update_player_lights
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn update_player_lights_sets_values() {
+        let mut state = ControllerState::default();
+        TelemetryExtractor::update_player_lights(&mut state, 0b0001, 0b0010);
+        assert_eq!(state.player_lights.led_mask, 0b0001);
+        assert_eq!(state.player_lights.flash_pattern, 0b0010);
+    }
+
+    #[test]
+    fn update_player_lights_zero_mask() {
+        let mut state = ControllerState::default();
+        TelemetryExtractor::update_player_lights(&mut state, 0, 0);
+        assert_eq!(state.player_lights.led_mask, 0);
+        assert_eq!(state.player_lights.flash_pattern, 0);
+    }
+
+    #[test]
+    fn update_player_lights_all_leds() {
+        let mut state = ControllerState::default();
+        TelemetryExtractor::update_player_lights(&mut state, 0xFF, 0xFF);
+        assert_eq!(state.player_lights.led_mask, 0xFF);
+        assert_eq!(state.player_lights.flash_pattern, 0xFF);
+    }
+
+    // -----------------------------------------------------------------------
+    //  update_home_light
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn update_home_light_enabled() {
+        let mut state = ControllerState::default();
+        TelemetryExtractor::update_home_light(&mut state, true, 128, 0b0101);
+        assert!(state.home_light.enabled);
+        assert_eq!(state.home_light.brightness, 128);
+        assert_eq!(state.home_light.pulse_pattern, 0b0101);
+    }
+
+    #[test]
+    fn update_home_light_disabled() {
+        let mut state = ControllerState::default();
+        TelemetryExtractor::update_home_light(&mut state, false, 0, 0);
+        assert!(!state.home_light.enabled);
+        assert_eq!(state.home_light.brightness, 0);
+        assert_eq!(state.home_light.pulse_pattern, 0);
+    }
+
+    #[test]
+    fn update_home_light_max_brightness() {
+        let mut state = ControllerState::default();
+        TelemetryExtractor::update_home_light(&mut state, true, 255, 0xFF);
+        assert!(state.home_light.enabled);
+        assert_eq!(state.home_light.brightness, 255);
+        assert_eq!(state.home_light.pulse_pattern, 0xFF);
+    }
+
+    // -----------------------------------------------------------------------
+    //  has_valid_calibration
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn has_valid_calibration_false_when_none() {
+        let state = ControllerState::default();
+        assert!(!TelemetryExtractor::has_valid_calibration(&state));
+    }
+
+    #[test]
+    fn has_valid_calibration_false_when_invalid() {
+        let mut state = ControllerState::default();
+        state.stick_calibration = Some(StickCalibration {
+            valid: false,
+            ..Default::default()
+        });
+        assert!(!TelemetryExtractor::has_valid_calibration(&state));
+    }
+
+    #[test]
+    fn has_valid_calibration_true_when_valid() {
+        let mut state = ControllerState::default();
+        state.stick_calibration = Some(StickCalibration {
+            valid: true,
+            ..Default::default()
+        });
+        assert!(TelemetryExtractor::has_valid_calibration(&state));
+    }
+
+    // -----------------------------------------------------------------------
+    //  AppConfig default battery_warning_threshold
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn app_config_default_battery_warning_threshold() {
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.battery_warning_threshold, 15);
+    }
+
+    // -----------------------------------------------------------------------
+    //  ConnectionQuality default
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn connection_quality_default_values() {
+        let cq = ConnectionQuality::default();
+        assert_eq!(cq.latency_ms, 0.0);
+        assert_eq!(cq.packet_loss_rate, 0.0);
+        assert_eq!(cq.last_report_timer, 0);
+        assert_eq!(cq.report_rate_hz, 0);
+        assert_eq!(cq.total_packets, 0);
+        assert_eq!(cq.dropped, 0);
+        assert_eq!(cq.retries, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    //  PlayerLights / HomeLight defaults
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn player_lights_default_values() {
+        let pl = PlayerLights::default();
+        assert_eq!(pl.led_mask, 0);
+        assert_eq!(pl.flash_pattern, 0);
+    }
+
+    #[test]
+    fn home_light_default_values() {
+        let hl = HomeLight::default();
+        assert!(!hl.enabled);
+        assert_eq!(hl.brightness, 0);
+        assert_eq!(hl.pulse_pattern, 0);
+    }
+}

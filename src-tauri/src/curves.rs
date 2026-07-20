@@ -350,3 +350,652 @@ pub fn apply_stick_curve_and_zones(
         debug!("Right stick zone action triggered: {:?}", action);
     }
 }
+
+// =============================================================================
+//  Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{Action, ButtonId};
+
+    /// Helper: compare two f32 values with an absolute tolerance.
+    fn approx(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-5
+    }
+
+    fn assert_approx(a: f32, b: f32, msg: &str) {
+        assert!(approx(a, b), "{msg}: {a} != {b}");
+    }
+
+    fn assert_pair_approx((ax, ay): (f32, f32), (bx, by): (f32, f32), msg: &str) {
+        assert_approx(ax, bx, &format!("{msg} (x)"));
+        assert_approx(ay, by, &format!("{msg} (y)"));
+    }
+
+    // -------------------------------------------------------------------------
+    //  clamp_unit
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn clamp_unit_within_range_is_unchanged() {
+        assert_approx(clamp_unit(0.0), 0.0, "zero unchanged");
+        assert_approx(clamp_unit(0.5), 0.5, "mid unchanged");
+        assert_approx(clamp_unit(-0.5), -0.5, "negative mid unchanged");
+        assert_approx(clamp_unit(1.0), 1.0, "max unchanged");
+        assert_approx(clamp_unit(-1.0), -1.0, "min unchanged");
+    }
+
+    #[test]
+    fn clamp_unit_clamps_overflow() {
+        assert_approx(clamp_unit(2.0), 1.0, "over-max clamped to 1");
+        assert_approx(clamp_unit(-2.0), -1.0, "under-min clamped to -1");
+        assert_approx(clamp_unit(100.0), 1.0, "large positive clamped");
+        assert_approx(clamp_unit(-100.0), -1.0, "large negative clamped");
+    }
+
+    // -------------------------------------------------------------------------
+    //  validate_response_curve
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn validate_linear_is_ok() {
+        assert!(validate_response_curve(&ResponseCurveType::Linear).is_ok());
+    }
+
+    #[test]
+    fn validate_scurve_is_ok() {
+        assert!(validate_response_curve(&ResponseCurveType::SCurve).is_ok());
+    }
+
+    #[test]
+    fn validate_exponential_finite_is_ok() {
+        assert!(validate_response_curve(&ResponseCurveType::Exponential(2.0)).is_ok());
+        assert!(validate_response_curve(&ResponseCurveType::Exponential(0.5)).is_ok());
+    }
+
+    #[test]
+    fn validate_exponential_nan_is_err() {
+        assert!(validate_response_curve(&ResponseCurveType::Exponential(f32::NAN)).is_err());
+    }
+
+    #[test]
+    fn validate_exponential_infinite_is_err() {
+        assert!(validate_response_curve(&ResponseCurveType::Exponential(f32::INFINITY)).is_err());
+    }
+
+    #[test]
+    fn validate_bezier_finite_is_ok() {
+        let curve = ResponseCurveType::Bezier {
+            p1: [0.3, 0.9],
+            p2: [0.7, 0.1],
+        };
+        assert!(validate_response_curve(&curve).is_ok());
+    }
+
+    #[test]
+    fn validate_bezier_nan_is_err() {
+        let curve = ResponseCurveType::Bezier {
+            p1: [f32::NAN, 0.9],
+            p2: [0.7, 0.1],
+        };
+        assert!(validate_response_curve(&curve).is_err());
+    }
+
+    #[test]
+    fn validate_bezier_infinite_is_err() {
+        let curve = ResponseCurveType::Bezier {
+            p1: [0.3, 0.9],
+            p2: [0.7, f32::INFINITY],
+        };
+        assert!(validate_response_curve(&curve).is_err());
+    }
+
+    // -------------------------------------------------------------------------
+    //  apply_response_curve — Linear
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn linear_is_identity() {
+        let curve = ResponseCurveType::Linear;
+        for &v in &[0.0, 0.25, 0.5, 0.75, 1.0, -0.25, -0.5, -0.75, -1.0] {
+            assert_approx(apply_response_curve(v, &curve), v, "linear identity");
+        }
+    }
+
+    #[test]
+    fn linear_clamps_input() {
+        let curve = ResponseCurveType::Linear;
+        assert_approx(apply_response_curve(2.0, &curve), 1.0, "linear clamps high");
+        assert_approx(apply_response_curve(-2.0, &curve), -1.0, "linear clamps low");
+    }
+
+    #[test]
+    fn linear_zero_is_zero() {
+        assert_approx(apply_response_curve(0.0, &ResponseCurveType::Linear), 0.0, "zero");
+    }
+
+    // -------------------------------------------------------------------------
+    //  apply_response_curve — Exponential
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn exponential_power_one_is_identity() {
+        let curve = ResponseCurveType::Exponential(1.0);
+        for &v in &[0.1, 0.5, 0.9, -0.1, -0.5, -0.9] {
+            assert_approx(apply_response_curve(v, &curve), v, "exp power=1 identity");
+        }
+    }
+
+    #[test]
+    fn exponential_power_two_squares_magnitude() {
+        let curve = ResponseCurveType::Exponential(2.0);
+        assert_approx(apply_response_curve(0.5, &curve), 0.25, "exp 0.5^2");
+        assert_approx(apply_response_curve(-0.5, &curve), -0.25, "exp -0.5^2");
+        assert_approx(apply_response_curve(1.0, &curve), 1.0, "exp 1^2");
+        assert_approx(apply_response_curve(-1.0, &curve), -1.0, "exp -1^2");
+    }
+
+    #[test]
+    fn exponential_power_half_is_sqrt() {
+        let curve = ResponseCurveType::Exponential(0.5);
+        assert_approx(apply_response_curve(0.25, &curve), 0.5, "exp sqrt 0.25");
+        assert_approx(apply_response_curve(-0.25, &curve), -0.5, "exp sqrt -0.25");
+    }
+
+    #[test]
+    fn exponential_preserves_sign() {
+        let curve = ResponseCurveType::Exponential(3.0);
+        assert!(apply_response_curve(0.5, &curve) > 0.0, "positive stays positive");
+        assert!(apply_response_curve(-0.5, &curve) < 0.0, "negative stays negative");
+    }
+
+    #[test]
+    fn exponential_zero_is_zero() {
+        assert_approx(
+            apply_response_curve(0.0, &ResponseCurveType::Exponential(2.0)),
+            0.0,
+            "exp zero",
+        );
+    }
+
+    #[test]
+    fn exponential_clamps_output() {
+        let curve = ResponseCurveType::Exponential(0.1);
+        assert_approx(apply_response_curve(1.0, &curve), 1.0, "exp clamps at 1");
+    }
+
+    #[test]
+    fn exponential_invalid_power_returns_clamped_input() {
+        let curve = ResponseCurveType::Exponential(f32::NAN);
+        // Validation fails, so the clamped input is returned unchanged.
+        assert_approx(apply_response_curve(0.5, &curve), 0.5, "invalid exp passthrough");
+    }
+
+    // -------------------------------------------------------------------------
+    //  apply_response_curve — SCurve
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn scurve_endpoints() {
+        let curve = ResponseCurveType::SCurve;
+        assert_approx(apply_response_curve(0.0, &curve), 0.0, "scurve 0");
+        assert_approx(apply_response_curve(1.0, &curve), 1.0, "scurve 1");
+        assert_approx(apply_response_curve(-1.0, &curve), -1.0, "scurve -1");
+    }
+
+    #[test]
+    fn scurve_midpoint_is_half() {
+        let curve = ResponseCurveType::SCurve;
+        // smoothstep at 0.5: 3*0.25 - 2*0.125 = 0.75 - 0.25 = 0.5
+        assert_approx(apply_response_curve(0.5, &curve), 0.5, "scurve 0.5");
+    }
+
+    #[test]
+    fn scurve_preserves_sign() {
+        let curve = ResponseCurveType::SCurve;
+        assert!(apply_response_curve(0.5, &curve) > 0.0, "scurve positive");
+        assert!(apply_response_curve(-0.5, &curve) < 0.0, "scurve negative");
+    }
+
+    #[test]
+    fn scurve_is_smoothstep() {
+        let curve = ResponseCurveType::SCurve;
+        let x = 0.3_f32;
+        let expected = x * x * (3.0 - 2.0 * x);
+        assert_approx(apply_response_curve(x, &curve), expected, "scurve formula");
+    }
+
+    // -------------------------------------------------------------------------
+    //  apply_response_curve — Bezier
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn bezier_linear_control_points_endpoints() {
+        // Control points on the diagonal produce a monotonic curve.
+        let curve = ResponseCurveType::Bezier {
+            p1: [1.0 / 3.0, 1.0 / 3.0],
+            p2: [2.0 / 3.0, 2.0 / 3.0],
+        };
+        // Endpoints are always exact.
+        assert_approx(apply_response_curve(0.0, &curve), 0.0, "bezier linear 0");
+        assert_approx(apply_response_curve(1.0, &curve), 1.0, "bezier linear 1");
+    }
+
+    #[test]
+    fn bezier_endpoints() {
+        let curve = ResponseCurveType::Bezier {
+            p1: [0.3, 0.9],
+            p2: [0.7, 0.1],
+        };
+        assert_approx(apply_response_curve(0.0, &curve), 0.0, "bezier 0");
+        assert_approx(apply_response_curve(1.0, &curve), 1.0, "bezier 1");
+    }
+
+    #[test]
+    fn bezier_preserves_sign() {
+        let curve = ResponseCurveType::Bezier {
+            p1: [0.3, 0.9],
+            p2: [0.7, 0.1],
+        };
+        assert!(apply_response_curve(0.5, &curve) >= 0.0, "bezier positive");
+        assert!(apply_response_curve(-0.5, &curve) <= 0.0, "bezier negative");
+    }
+
+    #[test]
+    fn bezier_output_in_unit_range() {
+        let curve = ResponseCurveType::Bezier {
+            p1: [0.1, 0.95],
+            p2: [0.9, 0.05],
+        };
+        for &v in &[0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0] {
+            let out = apply_response_curve(v, &curve);
+            assert!(
+                (0.0..=1.0).contains(&out),
+                "bezier out of range for {v}: {out}"
+            );
+        }
+    }
+
+    #[test]
+    fn bezier_clamps_control_points_outside_unit() {
+        // Control points outside [0,1] should be clamped silently.
+        let curve = ResponseCurveType::Bezier {
+            p1: [-1.0, 2.0],
+            p2: [2.0, -1.0],
+        };
+        // Should not panic and should produce a value in [0,1].
+        let out = apply_response_curve(0.5, &curve);
+        assert!((0.0..=1.0).contains(&out), "clamped bezier out of range: {out}");
+    }
+
+    // -------------------------------------------------------------------------
+    //  apply_stick_curve (per-axis)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn stick_curve_linear_is_identity_pair() {
+        let curve = ResponseCurveType::Linear;
+        assert_pair_approx(
+            apply_stick_curve(0.5, -0.3, &curve),
+            (0.5, -0.3),
+            "stick linear",
+        );
+    }
+
+    #[test]
+    fn stick_curve_exponential_applies_per_axis() {
+        let curve = ResponseCurveType::Exponential(2.0);
+        let (x, y) = apply_stick_curve(0.5, -0.5, &curve);
+        assert_approx(x, 0.25, "stick exp x");
+        assert_approx(y, -0.25, "stick exp y");
+    }
+
+    #[test]
+    fn stick_curve_clamps_inputs() {
+        let curve = ResponseCurveType::Linear;
+        let (x, y) = apply_stick_curve(2.0, -2.0, &curve);
+        assert_approx(x, 1.0, "stick clamp x");
+        assert_approx(y, -1.0, "stick clamp y");
+    }
+
+    #[test]
+    fn stick_curve_zero_is_zero() {
+        let curve = ResponseCurveType::Exponential(2.0);
+        let (x, y) = apply_stick_curve(0.0, 0.0, &curve);
+        assert_pair_approx((x, y), (0.0, 0.0), "stick zero");
+    }
+
+    // -------------------------------------------------------------------------
+    //  apply_stick_curve_radial
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn stick_curve_radial_zero_is_zero() {
+        let curve = ResponseCurveType::Exponential(2.0);
+        assert_pair_approx(
+            apply_stick_curve_radial(0.0, 0.0, &curve),
+            (0.0, 0.0),
+            "radial zero",
+        );
+    }
+
+    #[test]
+    fn stick_curve_radial_preserves_direction() {
+        let curve = ResponseCurveType::Exponential(2.0);
+        let (x, y) = apply_stick_curve_radial(0.6, 0.8, &curve);
+        // Original magnitude is 1.0; after exp(2.0) it's still 1.0.
+        let m = (x * x + y * y).sqrt();
+        assert_approx(m, 1.0, "radial preserves unit magnitude");
+        // Direction preserved: ratio x:y should be 0.6:0.8 = 3:4
+        assert_approx(x / y, 0.6 / 0.8, "radial direction preserved");
+    }
+
+    #[test]
+    fn stick_curve_radial_scales_magnitude() {
+        let curve = ResponseCurveType::Exponential(2.0);
+        let (x, y) = apply_stick_curve_radial(0.3, 0.4, &curve);
+        // Original magnitude = 0.5; after exp(2.0) = 0.25.
+        let m = (x * x + y * y).sqrt();
+        assert_approx(m, 0.25, "radial scales magnitude");
+    }
+
+    #[test]
+    fn stick_curve_radial_clamps_inputs() {
+        let curve = ResponseCurveType::Linear;
+        let (x, y) = apply_stick_curve_radial(2.0, 2.0, &curve);
+        // Clamped to (1,1), magnitude sqrt(2) > 1.0, so apply_response_curve
+        // clamps the magnitude to 1.0. The vector is then scaled to unit length.
+        let m = (x * x + y * y).sqrt();
+        assert_approx(m, 1.0, "radial clamps magnitude to 1");
+        // Direction preserved: x == y after rescaling.
+        assert_approx(x, y, "radial clamped direction");
+    }
+
+    #[test]
+    fn stick_curve_radial_linear_preserves_vector() {
+        let curve = ResponseCurveType::Linear;
+        let (x, y) = apply_stick_curve_radial(0.3, 0.4, &curve);
+        assert_pair_approx((x, y), (0.3, 0.4), "radial linear identity");
+    }
+
+    // -------------------------------------------------------------------------
+    //  Bézier helper functions
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn bezier_x_endpoints() {
+        assert_approx(bezier_x(0.0, 0.3, 0.7), 0.0, "bezier_x(0)");
+        assert_approx(bezier_x(1.0, 0.3, 0.7), 1.0, "bezier_x(1)");
+    }
+
+    #[test]
+    fn bezier_y_endpoints() {
+        assert_approx(bezier_y(0.0, 0.9, 0.1), 0.0, "bezier_y(0)");
+        assert_approx(bezier_y(1.0, 0.9, 0.1), 1.0, "bezier_y(1)");
+    }
+
+    #[test]
+    fn bezier_x_midpoint() {
+        // At t=0.5 with p1x=1/3, p2x=2/3 (linear), x should be 0.5.
+        let x = bezier_x(0.5, 1.0 / 3.0, 2.0 / 3.0);
+        assert_approx(x, 0.5, "bezier_x linear midpoint");
+    }
+
+    #[test]
+    fn bezier_y_midpoint() {
+        let y = bezier_y(0.5, 1.0 / 3.0, 2.0 / 3.0);
+        assert_approx(y, 0.5, "bezier_y linear midpoint");
+    }
+
+    #[test]
+    fn bezier_dx_positive_for_monotonic_curve() {
+        // For p1x, p2x in [0,1], the derivative should be non-negative.
+        let dx = bezier_dx(0.5, 0.3, 0.7);
+        assert!(dx >= 0.0, "bezier_dx non-negative: {dx}");
+    }
+
+    #[test]
+    fn bezier_dx_at_endpoints() {
+        // dx(0) = 3*p1x, dx(1) = 3*(1-p2x)
+        assert_approx(bezier_dx(0.0, 0.3, 0.7), 0.9, "bezier_dx(0)");
+        assert_approx(bezier_dx(1.0, 0.3, 0.7), 0.9, "bezier_dx(1)");
+    }
+
+    #[test]
+    fn cubic_bezier_y_for_x_linear_endpoints() {
+        let p1 = [1.0 / 3.0, 1.0 / 3.0];
+        let p2 = [2.0 / 3.0, 2.0 / 3.0];
+        // Endpoints are always exact.
+        assert_approx(cubic_bezier_y_for_x(0.0, &p1, &p2), 0.0, "bezier_y 0");
+        assert_approx(cubic_bezier_y_for_x(1.0, &p1, &p2), 1.0, "bezier_y 1");
+    }
+
+    #[test]
+    fn cubic_bezier_y_for_x_endpoints() {
+        let p1 = [0.3, 0.9];
+        let p2 = [0.7, 0.1];
+        assert_approx(cubic_bezier_y_for_x(0.0, &p1, &p2), 0.0, "bezier_y 0");
+        assert_approx(cubic_bezier_y_for_x(1.0, &p1, &p2), 1.0, "bezier_y 1");
+    }
+
+    #[test]
+    fn cubic_bezier_y_for_x_in_range() {
+        let p1 = [0.3, 0.9];
+        let p2 = [0.7, 0.1];
+        for &x in &[0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0] {
+            let y = cubic_bezier_y_for_x(x, &p1, &p2);
+            assert!((0.0..=1.0).contains(&y), "bezier_y out of range for {x}: {y}");
+        }
+    }
+
+    #[test]
+    fn cubic_bezier_y_for_x_clamps_target() {
+        let p1 = [0.3, 0.9];
+        let p2 = [0.7, 0.1];
+        // target_x outside [0,1] is clamped.
+        assert_approx(cubic_bezier_y_for_x(-1.0, &p1, &p2), 0.0, "bezier_y clamp low");
+        assert_approx(cubic_bezier_y_for_x(2.0, &p1, &p2), 1.0, "bezier_y clamp high");
+    }
+
+    // -------------------------------------------------------------------------
+    //  zone_action
+    // -------------------------------------------------------------------------
+
+    fn zones_with_actions() -> StickZones {
+        StickZones {
+            deadzone: 0.1,
+            low: 0.3,
+            medium: 0.6,
+            high: 0.9,
+            low_actions: vec![Action::Button(ButtonId::A)],
+            medium_actions: vec![Action::Button(ButtonId::B), Action::Button(ButtonId::X)],
+            high_actions: vec![Action::ProfileNext],
+        }
+    }
+
+    #[test]
+    fn zone_action_deadzone_returns_empty() {
+        let zones = zones_with_actions();
+        assert_eq!(zone_action(0.0, &zones), Vec::new());
+        assert_eq!(zone_action(0.1, &zones), Vec::new()); // equal to deadzone
+    }
+
+    #[test]
+    fn zone_action_low_zone() {
+        let zones = zones_with_actions();
+        assert_eq!(zone_action(0.11, &zones), vec![Action::Button(ButtonId::A)]);
+        assert_eq!(zone_action(0.3, &zones), vec![Action::Button(ButtonId::A)]); // equal to low
+    }
+
+    #[test]
+    fn zone_action_medium_zone() {
+        let zones = zones_with_actions();
+        assert_eq!(
+            zone_action(0.31, &zones),
+            vec![Action::Button(ButtonId::B), Action::Button(ButtonId::X)]
+        );
+        assert_eq!(
+            zone_action(0.6, &zones),
+            vec![Action::Button(ButtonId::B), Action::Button(ButtonId::X)]
+        );
+    }
+
+    #[test]
+    fn zone_action_high_zone() {
+        let zones = zones_with_actions();
+        assert_eq!(zone_action(0.61, &zones), vec![Action::ProfileNext]);
+        assert_eq!(zone_action(1.0, &zones), vec![Action::ProfileNext]);
+    }
+
+    #[test]
+    fn zone_action_default_deadzone_is_zero() {
+        let zones = StickZones::default();
+        // default deadzone is 0.0, so magnitude 0.0 is <= deadzone -> empty
+        assert_eq!(zone_action(0.0, &zones), Vec::new());
+    }
+
+    // -------------------------------------------------------------------------
+    //  apply_deadzone_shape — radial
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn radial_deadzone_below_threshold_is_zero() {
+        let (x, y) = apply_deadzone_shape(0.05, 0.05, 0.1, "radial");
+        assert_pair_approx((x, y), (0.0, 0.0), "radial below threshold");
+    }
+
+    #[test]
+    fn radial_deadzone_at_threshold_is_zero() {
+        let (x, y) = apply_deadzone_shape(0.1, 0.0, 0.1, "radial");
+        assert_pair_approx((x, y), (0.0, 0.0), "radial at threshold");
+    }
+
+    #[test]
+    fn radial_deadzone_above_threshold_rescales() {
+        let (x, y) = apply_deadzone_shape(1.0, 0.0, 0.1, "radial");
+        // m=1, scale = (1-0.1)/(1-0.1) = 1.0
+        assert_approx(x, 1.0, "radial full scale x");
+        assert_approx(y, 0.0, "radial full scale y");
+    }
+
+    #[test]
+    fn radial_deadzone_preserves_direction() {
+        let (x, y) = apply_deadzone_shape(0.6, 0.8, 0.1, "radial");
+        // direction ratio preserved
+        assert_approx(x / y, 0.6 / 0.8, "radial direction");
+    }
+
+    #[test]
+    fn radial_deadzone_zero_input_is_zero() {
+        let (x, y) = apply_deadzone_shape(0.0, 0.0, 0.1, "radial");
+        assert_pair_approx((x, y), (0.0, 0.0), "radial zero input");
+    }
+
+    // -------------------------------------------------------------------------
+    //  apply_deadzone_shape — axial
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn axial_deadzone_below_threshold_is_zero() {
+        let (x, y) = apply_deadzone_shape(0.05, 0.05, 0.1, "axial");
+        assert_pair_approx((x, y), (0.0, 0.0), "axial below threshold");
+    }
+
+    #[test]
+    fn axial_deadzone_above_threshold_rescales() {
+        let (x, y) = apply_deadzone_shape(1.0, 0.05, 0.1, "axial");
+        assert_approx(x, 1.0, "axial x rescaled");
+        assert_approx(y, 0.0, "axial y zeroed");
+    }
+
+    #[test]
+    fn axial_deadzone_preserves_sign() {
+        let (x, y) = apply_deadzone_shape(-0.5, -0.5, 0.1, "axial");
+        assert!(x < 0.0, "axial x negative");
+        assert!(y < 0.0, "axial y negative");
+    }
+
+    #[test]
+    fn axial_deadzone_independent_axes() {
+        // x above threshold, y below
+        let (x, y) = apply_deadzone_shape(0.5, 0.05, 0.1, "axial");
+        assert!(x > 0.0, "axial x nonzero");
+        assert_approx(y, 0.0, "axial y zero");
+    }
+
+    // -------------------------------------------------------------------------
+    //  apply_deadzone_shape — elliptic
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn elliptic_deadzone_inside_ellipse_is_zero() {
+        // At the center, inside the ellipse.
+        let (x, y) = apply_deadzone_shape(0.01, 0.01, 0.1, "elliptic");
+        assert_pair_approx((x, y), (0.0, 0.0), "elliptic inside");
+    }
+
+    #[test]
+    fn elliptic_deadzone_zero_deadzone_is_zero() {
+        let (x, y) = apply_deadzone_shape(0.5, 0.5, 0.0, "elliptic");
+        assert_pair_approx((x, y), (0.0, 0.0), "elliptic zero deadzone");
+    }
+
+    #[test]
+    fn elliptic_deadzone_zero_input_is_zero() {
+        let (x, y) = apply_deadzone_shape(0.0, 0.0, 0.1, "elliptic");
+        assert_pair_approx((x, y), (0.0, 0.0), "elliptic zero input");
+    }
+
+    #[test]
+    fn elliptic_deadzone_outside_ellipse_is_nonzero() {
+        let (x, y) = apply_deadzone_shape(1.0, 1.0, 0.1, "elliptic");
+        // Should produce a non-zero rescaled vector.
+        let m = (x * x + y * y).sqrt();
+        assert!(m > 0.0, "elliptic outside nonzero: m={m}");
+    }
+
+    // -------------------------------------------------------------------------
+    //  apply_deadzone_shape — fallback / case-insensitivity
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn deadzone_shape_case_insensitive() {
+        let upper = apply_deadzone_shape(0.5, 0.0, 0.1, "RADIAL");
+        let lower = apply_deadzone_shape(0.5, 0.0, 0.1, "radial");
+        assert_pair_approx(upper, lower, "case insensitive radial");
+    }
+
+    #[test]
+    fn deadzone_shape_unknown_falls_back_to_radial() {
+        let unknown = apply_deadzone_shape(0.5, 0.0, 0.1, "unknown_shape");
+        let radial = apply_deadzone_shape(0.5, 0.0, 0.1, "radial");
+        assert_pair_approx(unknown, radial, "unknown falls back to radial");
+    }
+
+    #[test]
+    fn deadzone_shape_empty_string_falls_back_to_radial() {
+        let empty = apply_deadzone_shape(0.5, 0.0, 0.1, "");
+        let radial = apply_deadzone_shape(0.5, 0.0, 0.1, "radial");
+        assert_pair_approx(empty, radial, "empty falls back to radial");
+    }
+
+    // -------------------------------------------------------------------------
+    //  apply_deadzone_shape — all shapes with zero deadzone
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn radial_deadzone_zero_deadzone_full_input() {
+        // With deadzone=0, radial rescales (m-0)/(1-0) = m, so identity for unit vector.
+        let (x, y) = apply_deadzone_shape(1.0, 0.0, 0.0, "radial");
+        assert_approx(x, 1.0, "radial zero dz x");
+        assert_approx(y, 0.0, "radial zero dz y");
+    }
+
+    #[test]
+    fn axial_deadzone_zero_deadzone_is_identity() {
+        let (x, y) = apply_deadzone_shape(0.5, -0.3, 0.0, "axial");
+        assert_pair_approx((x, y), (0.5, -0.3), "axial zero dz identity");
+    }
+}

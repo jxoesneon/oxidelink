@@ -338,4 +338,282 @@ mod tests {
         assert!(flick, "flick should register after cooldown");
         assert!(delta.abs() > 90.0, "turn-around delta was {}", delta);
     }
+
+    // --- Config defaults ----------------------------------------------------
+
+    #[test]
+    fn flick_stick_config_defaults() {
+        let cfg = FlickStickConfig::default();
+        assert!(!cfg.enabled);
+        assert!((cfg.flick_threshold - 0.90).abs() < f32::EPSILON);
+        assert!((cfg.rotate_rate_deg_per_sec - 360.0).abs() < f32::EPSILON);
+        assert!((cfg.stick_deadzone - 0.15).abs() < f32::EPSILON);
+        assert_eq!(cfg.flick_cooldown_ms, 150);
+        assert!((cfg.output_smoothing - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn right_stick_mode_default_is_camera() {
+        assert_eq!(RightStickMode::default(), RightStickMode::Camera);
+    }
+
+    #[test]
+    fn right_stick_config_defaults() {
+        let cfg = RightStickConfig::default();
+        assert_eq!(cfg.mode, RightStickMode::Camera);
+        assert_eq!(cfg.flick_stick, FlickStickConfig::default());
+    }
+
+    // --- serde round-trips --------------------------------------------------
+
+    #[test]
+    fn flick_stick_config_serde_round_trip() {
+        let cfg = FlickStickConfig {
+            enabled: true,
+            flick_threshold: 0.75,
+            rotate_rate_deg_per_sec: 540.0,
+            stick_deadzone: 0.2,
+            flick_cooldown_ms: 300,
+            output_smoothing: 0.4,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: FlickStickConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cfg);
+    }
+
+    #[test]
+    fn right_stick_mode_serde_snake_case() {
+        let json = serde_json::to_string(&RightStickMode::FlickStick).unwrap();
+        assert_eq!(json, "\"flick_stick\"");
+        let back: RightStickMode = serde_json::from_str("\"flick_stick\"").unwrap();
+        assert_eq!(back, RightStickMode::FlickStick);
+    }
+
+    #[test]
+    fn right_stick_config_serde_round_trip() {
+        let cfg = RightStickConfig {
+            mode: RightStickMode::FlickStick,
+            flick_stick: FlickStickConfig {
+                enabled: true,
+                flick_threshold: 0.8,
+                rotate_rate_deg_per_sec: 720.0,
+                stick_deadzone: 0.05,
+                flick_cooldown_ms: 50,
+                output_smoothing: 0.25,
+            },
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: RightStickConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cfg);
+    }
+
+    // --- normalize_degrees helper ------------------------------------------
+
+    #[test]
+    fn normalize_degrees_wraps_to_signed_range() {
+        assert!((normalize_degrees(0.0) - 0.0).abs() < f32::EPSILON);
+        assert!((normalize_degrees(90.0) - 90.0).abs() < f32::EPSILON);
+        assert!((normalize_degrees(-90.0) + 90.0).abs() < f32::EPSILON);
+        // 180 and -180 both map to -180 (the negative boundary).
+        assert!((normalize_degrees(180.0) + 180.0).abs() < f32::EPSILON);
+        assert!((normalize_degrees(-180.0) + 180.0).abs() < f32::EPSILON);
+        // 270 -> -90.
+        assert!((normalize_degrees(270.0) + 90.0).abs() < f32::EPSILON);
+        // 360 -> 0.
+        assert!((normalize_degrees(360.0) - 0.0).abs() < f32::EPSILON);
+        // 540 -> 180 -> -180.
+        assert!((normalize_degrees(540.0) + 180.0).abs() < f32::EPSILON);
+        // -270 -> 90.
+        assert!((normalize_degrees(-270.0) - 90.0).abs() < f32::EPSILON);
+    }
+
+    // --- Polar-to-cartesian / angle conversions ----------------------------
+
+    #[test]
+    fn flick_down_uses_180_degrees() {
+        let mut fs = FlickStick::with_config(test_cfg());
+        let (delta, flick) = fs.process(0.0, -1.0, 0.016);
+        assert!(flick);
+        // Down is 180 deg from +Y; delta should be ±180.
+        assert!(
+            (delta - 180.0).abs() < 0.1 || (delta + 180.0).abs() < 0.1,
+            "down flick delta was {}",
+            delta
+        );
+    }
+
+    #[test]
+    fn flick_up_is_zero_delta() {
+        let mut fs = FlickStick::with_config(test_cfg());
+        let (delta, flick) = fs.process(0.0, 1.0, 0.016);
+        assert!(flick);
+        assert!(delta.abs() < 0.1, "up flick delta was {}", delta);
+        assert!(fs.current_yaw.abs() < 0.1);
+    }
+
+    #[test]
+    fn flick_diagonal_right_up() {
+        let mut fs = FlickStick::with_config(test_cfg());
+        let (delta, flick) = fs.process(0.7071, 0.7071, 0.016);
+        assert!(flick);
+        // atan2(0.7071, 0.7071) = 45 deg.
+        assert!((delta - 45.0).abs() < 0.5, "diagonal delta was {}", delta);
+        assert!((fs.current_yaw - 45.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn flick_diagonal_left_down() {
+        let mut fs = FlickStick::with_config(test_cfg());
+        let (delta, flick) = fs.process(-0.7071, -0.7071, 0.016);
+        assert!(flick);
+        // atan2(-0.7071, -0.7071) = -135 deg.
+        assert!((delta + 135.0).abs() < 0.5, "diagonal delta was {}", delta);
+        assert!((fs.current_yaw + 135.0).abs() < 0.5);
+    }
+
+    // --- Disabled / deadzone edge cases ------------------------------------
+
+    #[test]
+    fn disabled_config_returns_zero() {
+        let mut fs = FlickStick::with_config(FlickStickConfig {
+            enabled: false,
+            ..test_cfg()
+        });
+        let (delta, flick) = fs.process(1.0, 0.0, 0.016);
+        assert!(!flick);
+        assert_eq!(delta, 0.0);
+        assert!(!fs.flick_active);
+    }
+
+    #[test]
+    fn magnitude_below_deadzone_returns_zero() {
+        let mut fs = FlickStick::with_config(test_cfg());
+        // 0.05 magnitude < 0.1 deadzone.
+        let (delta, flick) = fs.process(0.05, 0.0, 0.016);
+        assert!(!flick);
+        assert_eq!(delta, 0.0);
+        assert!(!fs.flick_active);
+    }
+
+    #[test]
+    fn magnitude_just_above_deadzone_but_below_threshold_no_flick() {
+        let mut fs = FlickStick::with_config(test_cfg());
+        // 0.5 magnitude: above deadzone (0.1), below flick threshold (0.9).
+        let (delta, flick) = fs.process(0.5, 0.0, 0.016);
+        assert!(!flick, "sub-threshold input should not flick");
+        assert_eq!(delta, 0.0);
+        assert!(!fs.flick_active);
+    }
+
+    #[test]
+    fn zero_magnitude_returns_zero() {
+        let mut fs = FlickStick::with_config(test_cfg());
+        let (delta, flick) = fs.process(0.0, 0.0, 0.016);
+        assert!(!flick);
+        assert_eq!(delta, 0.0);
+    }
+
+    // --- reset / set_config ------------------------------------------------
+
+    #[test]
+    fn reset_clears_state() {
+        let mut fs = FlickStick::with_config(test_cfg());
+        fs.process(1.0, 0.0, 0.016);
+        assert!(fs.flick_active);
+        assert!(fs.last_flick_time.is_some());
+        assert!((fs.current_yaw - 90.0).abs() < 0.1);
+
+        fs.reset();
+        assert!((fs.current_yaw - 0.0).abs() < f32::EPSILON);
+        assert!(fs.last_flick_time.is_none());
+        assert!(!fs.flick_active);
+        assert!((fs.last_output - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn set_config_replaces_cached_config() {
+        let mut fs = FlickStick::new();
+        // Initially disabled -> no output.
+        let (delta, flick) = fs.process(1.0, 0.0, 0.016);
+        assert!(!flick);
+        assert_eq!(delta, 0.0);
+
+        // Swap in an enabled config.
+        fs.set_config(test_cfg());
+        let (delta, flick) = fs.process(1.0, 0.0, 0.016);
+        assert!(flick);
+        assert!((delta - 90.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn with_config_seeds_config() {
+        let cfg = test_cfg();
+        let fs = FlickStick::with_config(cfg);
+        assert_eq!(fs.config, cfg);
+        // Other fields default.
+        assert!((fs.current_yaw - 0.0).abs() < f32::EPSILON);
+        assert!(fs.last_flick_time.is_none());
+        assert!(!fs.flick_active);
+    }
+
+    // --- Output smoothing ---------------------------------------------------
+
+    #[test]
+    fn smoothing_low_pass_filters_output() {
+        let cfg = FlickStickConfig {
+            output_smoothing: 0.5,
+            ..test_cfg()
+        };
+        let mut fs = FlickStick::with_config(cfg);
+        // First flick: smoothed = raw * 0.5 + 0 * 0.5 = 45 deg (raw 90).
+        let (delta, flick) = fs.process(1.0, 0.0, 0.016);
+        assert!(flick);
+        assert!((delta - 45.0).abs() < 0.1, "smoothed delta was {}", delta);
+        assert!((fs.last_output - 45.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn smoothing_clamped_to_one_uses_last_output() {
+        let cfg = FlickStickConfig {
+            output_smoothing: 1.0,
+            ..test_cfg()
+        };
+        let mut fs = FlickStick::with_config(cfg);
+        // First flick: smoothed = raw * 0 + 0 * 1 = 0.
+        let (delta, flick) = fs.process(1.0, 0.0, 0.016);
+        assert!(flick);
+        assert!((delta - 0.0).abs() < f32::EPSILON);
+    }
+
+    // --- Continuous rotation details ---------------------------------------
+
+    #[test]
+    fn continuous_rotation_accumulates_yaw() {
+        let mut fs = FlickStick::with_config(test_cfg());
+        // Initial flick right.
+        fs.process(1.0, 0.0, 0.016);
+        let start_yaw = fs.current_yaw;
+        // Two more frames of held-right rotation.
+        fs.process(1.0, 0.0, 0.016);
+        fs.process(1.0, 0.0, 0.016);
+        let expected = start_yaw + 360.0 * 0.016 * 2.0;
+        assert!(
+            (fs.current_yaw - expected).abs() < 0.1,
+            "yaw was {}, expected {}",
+            fs.current_yaw,
+            expected
+        );
+    }
+
+    #[test]
+    fn sub_threshold_held_does_not_rotate() {
+        let mut fs = FlickStick::with_config(test_cfg());
+        // Initial flick to seed state.
+        fs.process(1.0, 0.0, 0.016);
+        // Drop below threshold but above deadzone: no rotation, no flick.
+        let (delta, flick) = fs.process(0.5, 0.0, 0.016);
+        assert!(!flick);
+        assert_eq!(delta, 0.0);
+        assert!(!fs.flick_active);
+    }
 }

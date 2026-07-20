@@ -141,10 +141,34 @@ fn current_exe_full_image_name() -> Result<String, String> {
     path_to_full_image_name(&exe)
 }
 
+/// Strip the `\\?\` (verbatim) prefix from a path if present.
+/// This is the pure string portion of [`path_to_full_image_name`].
+pub fn strip_verbatim_prefix(path: &str) -> &str {
+    path.strip_prefix(r"\\?\").unwrap_or(path)
+}
+
+/// Compute the NT-style image path from the stripped DOS path, the volume
+/// root (e.g. `C:\`), and the NT volume name (e.g.
+/// `\Device\HarddiskVolume3`).
+///
+/// This is the pure string portion of [`path_to_full_image_name`] that
+/// assembles the final `\Device\HarddiskVolume3\Users\me\app.exe` result.
+pub fn compute_nt_path(stripped: &str, vol_root: &str, nt_volume: &str) -> String {
+    let rest = if stripped
+        .to_lowercase()
+        .starts_with(&vol_root.to_lowercase())
+    {
+        &stripped[vol_root.len()..]
+    } else {
+        stripped
+    };
+    format!("{}\\{}", nt_volume, rest)
+}
+
 fn path_to_full_image_name(path: &Path) -> Result<String, String> {
     let path_str = path.to_string_lossy().to_string();
     // Strip any \\?\ prefix for volume-name lookups.
-    let stripped = path_str.strip_prefix(r"\\?\").unwrap_or(&path_str);
+    let stripped = strip_verbatim_prefix(&path_str);
 
     let wide = to_wide(stripped);
     let mut volume_buf = vec![0u16; 260];
@@ -181,15 +205,7 @@ fn path_to_full_image_name(path: &Path) -> Result<String, String> {
     }
     let nt_volume = from_wide(&dos_buf); // e.g. "\Device\HarddiskVolume3"
 
-    let rest = if stripped
-        .to_lowercase()
-        .starts_with(&vol_root.to_lowercase())
-    {
-        &stripped[vol_root.len()..]
-    } else {
-        stripped
-    };
-    Ok(format!("{}\\{}", nt_volume, rest))
+    Ok(compute_nt_path(stripped, &vol_root, &nt_volume))
 }
 
 // -----------------------------------------------------------------------------
@@ -549,6 +565,15 @@ pub fn find_pro_controller() -> Result<Option<String>, String> {
 //  Tauri command surface (not yet wired into main.rs invoke_handler)
 // -----------------------------------------------------------------------------
 
+/// Determine whether a device is effectively hidden.
+///
+/// A device is hidden only when HidHide is active (enabled) **and** a
+/// non-empty device path was found.  This is the pure logic portion of
+/// [`get_hidhide_status`].
+pub fn compute_hidden_flag(enabled: bool, device_path: &str) -> bool {
+    enabled && !device_path.is_empty()
+}
+
 fn get_hidhide_status() -> HidHideStatus {
     let mut status = HidHideStatus {
         installed: HidHideClient::is_installed(),
@@ -564,7 +589,7 @@ fn get_hidhide_status() -> HidHideStatus {
     match HidHideClient::new() {
         Ok(client) => {
             status.enabled = client.get_active().unwrap_or(false);
-            status.hidden = status.enabled && !status.device_path.is_empty();
+            status.hidden = compute_hidden_flag(status.enabled, &status.device_path);
             status.message = String::from("HidHide control device opened");
         }
         Err(e) => {

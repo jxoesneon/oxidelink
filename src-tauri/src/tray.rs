@@ -282,6 +282,13 @@ fn set_tray_minimize_for_app(app: &tauri::AppHandle, minimize: bool) -> Option<T
         .map(|ctx| set_tray_minimize(&ctx, minimize))
 }
 
+/// Decide whether a window close request should minimize to tray instead of
+/// quitting. Returns `true` when either `tray_minimize` or `close_to_tray` is
+/// enabled in the app config.
+pub fn should_minimize_on_close(config: &crate::state::AppConfig) -> bool {
+    config.tray_minimize || config.close_to_tray
+}
+
 /// Intercept `CloseRequested` and minimize to tray instead of quitting when
 /// `AppConfig.tray_minimize` or `AppConfig.close_to_tray` is enabled.
 pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
@@ -291,7 +298,7 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         let ctx = app.state::<AppCtx>();
         let minimize = {
             let config = ctx.shared.config.read();
-            config.tray_minimize || config.close_to_tray
+            should_minimize_on_close(&config)
         };
         if minimize {
             let _ = window.hide();
@@ -305,10 +312,10 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
 // Tauri commands
 // ---------------------------------------------------------------------------
 
-#[tauri::command]
-pub fn set_auto_start(ctx: State<AppCtx>, enabled: bool) -> Result<bool, String> {
-    set_auto_start_registry(enabled)?;
-
+/// Update the app config and runtime tray state for an auto-start toggle and
+/// emit `TrayStateChanged`. Returns the new `TrayState`. This is the pure
+/// (non-registry, non-persistence) half of the `set_auto_start` command.
+pub fn apply_auto_start_state(ctx: &AppCtx, enabled: bool) -> TrayState {
     {
         let mut config = ctx.shared.config.write();
         config.auto_start = enabled;
@@ -319,7 +326,17 @@ pub fn set_auto_start(ctx: State<AppCtx>, enabled: bool) -> Result<bool, String>
         controller.tray_state.auto_start = enabled;
         controller.tray_state.clone()
     };
-    let _ = ctx.tx.send(IpcEvent::TrayStateChanged { data: state });
+    let _ = ctx.tx.send(IpcEvent::TrayStateChanged {
+        data: state.clone(),
+    });
+    state
+}
+
+#[tauri::command]
+pub fn set_auto_start(ctx: State<AppCtx>, enabled: bool) -> Result<bool, String> {
+    set_auto_start_registry(enabled)?;
+
+    let _state = apply_auto_start_state(&ctx, enabled);
 
     // Persist the config change to disk when persistence is enabled.
     let cfg = ctx.shared.config.read().clone();
@@ -335,13 +352,14 @@ pub fn get_auto_start() -> bool {
     get_auto_start_registry()
 }
 
-#[tauri::command]
-pub fn set_tray_state(ctx: State<AppCtx>, state: TrayState, app: tauri::AppHandle) -> TrayState {
+/// Normalize a `TrayState` (`visible = !minimized`), write it to the active
+/// controller slot, and emit `TrayStateChanged`. Returns the normalized state.
+/// The window show/hide side effect is left to the Tauri command caller.
+pub fn apply_tray_state(ctx: &AppCtx, state: TrayState) -> TrayState {
     // Normalize: minimized means the window is hidden.
     let minimized = state.minimized;
-    let visible = !minimized;
     let state = TrayState {
-        visible,
+        visible: !minimized,
         minimized,
         auto_start: state.auto_start,
     };
@@ -351,18 +369,25 @@ pub fn set_tray_state(ctx: State<AppCtx>, state: TrayState, app: tauri::AppHandl
         controller.tray_state = state.clone();
     }
 
+    let _ = ctx.tx.send(IpcEvent::TrayStateChanged {
+        data: state.clone(),
+    });
+
+    state
+}
+
+#[tauri::command]
+pub fn set_tray_state(ctx: State<AppCtx>, state: TrayState, app: tauri::AppHandle) -> TrayState {
+    let state = apply_tray_state(&ctx, state);
+
     if let Some(window) = app.get_webview_window("main") {
-        if minimized {
+        if state.minimized {
             let _ = window.hide();
         } else {
             let _ = window.show();
             let _ = window.set_focus();
         }
     }
-
-    let _ = ctx.tx.send(IpcEvent::TrayStateChanged {
-        data: state.clone(),
-    });
 
     state
 }

@@ -867,4 +867,348 @@ mod tests {
         assert_eq!(EVT_REMOTE_UNPAIRED, 10);
         assert_eq!(EVT_LINK_KEY_STORE_FAIL, 18);
     }
+
+    // -----------------------------------------------------------------
+    // BthUsbEtwEvent: Debug + Clone (private struct, exercised via super)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn bth_usb_etw_event_clone_preserves_event_id() {
+        let ev = BthUsbEtwEvent { event_id: EVT_HCI_SIZE_MISMATCH };
+        let c = ev.clone();
+        assert_eq!(c.event_id, ev.event_id);
+    }
+
+    #[test]
+    fn bth_usb_etw_event_debug_contains_event_id() {
+        let ev = BthUsbEtwEvent { event_id: 42 };
+        let dbg = format!("{:?}", ev);
+        assert!(dbg.contains("42"));
+    }
+
+    // -----------------------------------------------------------------
+    // parse_event_id: additional edge cases
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn parse_event_id_handles_qualifiers_attribute_with_gt_in_value() {
+        // The parser scans for the first '>' after "<EventID". An attribute
+        // value containing '>' would break naive parsing, but the standard
+        // schema never includes it — verify a normal Qualifiers attribute.
+        let xml = "<Event><System><EventID Qualifiers='16384'>5</EventID></System></Event>";
+        assert_eq!(parse_event_id(xml), 5);
+    }
+
+    #[test]
+    fn parse_event_id_handles_multiple_attributes() {
+        let xml = "<Event><EventID Qualifiers='1' Guid='{abc}'>18</EventID></Event>";
+        assert_eq!(parse_event_id(xml), 18);
+    }
+
+    #[test]
+    fn parse_event_id_returns_zero_for_self_closing_tag() {
+        // A self-closing <EventID/> has no '>' followed by content before the
+        // next '<' — the parser reads empty content and returns 0.
+        let xml = "<Event><EventID/></Event>";
+        assert_eq!(parse_event_id(xml), 0);
+    }
+
+    #[test]
+    fn parse_event_id_uses_content_before_next_tag_only() {
+        // Trailing garbage after the closing '<' must not leak into the parse.
+        let xml = "<Event><EventID>5</EventID>garbage<Other>99</Other></Event>";
+        assert_eq!(parse_event_id(xml), 5);
+    }
+
+    #[test]
+    fn parse_event_id_handles_large_positive_value() {
+        let xml = "<Event><EventID>2147483647</EventID></Event>";
+        assert_eq!(parse_event_id(xml), 2147483647);
+    }
+
+    #[test]
+    fn parse_event_id_returns_zero_for_overflow_value() {
+        // i32::MAX + 1 overflows the parse → unwrap_or(0).
+        let xml = "<Event><EventID>2147483648</EventID></Event>";
+        assert_eq!(parse_event_id(xml), 0);
+    }
+
+    #[test]
+    fn parse_event_id_returns_zero_when_only_key_prefix_present() {
+        // "<EventID" appears but no '>' follows.
+        let xml = "<Event><EventID";
+        assert_eq!(parse_event_id(xml), 0);
+    }
+
+    // -----------------------------------------------------------------
+    // parse_poll_output: additional edge cases
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn parse_poll_output_handles_crlf_line_endings() {
+        let base = 621_355_968_000_000_000i64;
+        let input = format!("5|{}\r\n10|{}\r\n", base + 10_000, base + 20_000);
+        let (snap, total) = parse_poll_output(&input);
+        assert_eq!(total, 2);
+        assert_eq!(snap.power_down_events, 1);
+        assert_eq!(snap.disconnect_events, 1);
+    }
+
+    #[test]
+    fn parse_poll_output_counts_repeated_same_id() {
+        let base = 621_355_968_000_000_000i64;
+        let input = format!("5|{}\n5|{}\n5|{}\n", base + 10_000, base + 20_000, base + 30_000);
+        let (snap, total) = parse_poll_output(&input);
+        assert_eq!(snap.power_down_events, 3);
+        assert_eq!(total, 3);
+        assert_eq!(snap.last_event_id, EVT_HCI_SIZE_MISMATCH);
+        assert_eq!(snap.last_event_ts, 3);
+    }
+
+    #[test]
+    fn parse_poll_output_trims_whitespace_around_id_and_ticks() {
+        let base = 621_355_968_000_000_000i64;
+        // The line is trimmed as a whole, but individual parts are NOT trimmed.
+        // So "5|<ts>" (no spaces around pipe) parses correctly.
+        let input = format!("5|{}\n", base + 10_000);
+        let (snap, total) = parse_poll_output(&input);
+        assert_eq!(total, 1);
+        assert_eq!(snap.power_down_events, 1);
+    }
+
+    #[test]
+    fn parse_poll_output_line_with_only_pipe_counts_as_total() {
+        // "|" → id_str="" (parse→0), ts_str="" (parse→0). Counts toward total,
+        // matches no signature.
+        let (snap, total) = parse_poll_output("|\n");
+        assert_eq!(total, 1);
+        assert_eq!(snap.power_down_events, 0);
+        assert_eq!(snap.disconnect_events, 0);
+        assert_eq!(snap.link_key_faults, 0);
+    }
+
+    #[test]
+    fn parse_poll_output_line_with_extra_pipe_segments_ignores_them() {
+        let base = 621_355_968_000_000_000i64;
+        // split('|') yields ["5", "<ts>", "extra"] — only first two used.
+        let input = format!("5|{}|extra|junk\n", base + 10_000);
+        let (snap, total) = parse_poll_output(&input);
+        assert_eq!(total, 1);
+        assert_eq!(snap.power_down_events, 1);
+    }
+
+    #[test]
+    fn parse_poll_output_zero_ticks_does_not_record_latest() {
+        // ticks=0 → unix_ms clamped to 0; 0 is not > last_ts(0) so last_id
+        // stays 0 even though the signature counter increments.
+        let (snap, _) = parse_poll_output("5|0\n");
+        assert_eq!(snap.power_down_events, 1);
+        assert_eq!(snap.last_event_ts, 0);
+        assert_eq!(snap.last_event_id, 0);
+    }
+
+    #[test]
+    fn parse_poll_output_equal_timestamps_keep_first_id() {
+        // Two events with identical unix_ms: the second is NOT strictly
+        // greater, so last_event_id stays as the first event's id.
+        let base = 621_355_968_000_000_000i64;
+        let input = format!("5|{}\n10|{}\n", base + 10_000, base + 10_000);
+        let (snap, _) = parse_poll_output(&input);
+        assert_eq!(snap.last_event_id, EVT_HCI_SIZE_MISMATCH);
+    }
+
+    #[test]
+    fn parse_poll_output_mixed_known_and_unknown_ids() {
+        let base = 621_355_968_000_000_000i64;
+        let input = format!(
+            "5|{}\n99|{}\n10|{}\n18|{}\n200|{}\n",
+            base + 10_000,
+            base + 20_000,
+            base + 30_000,
+            base + 40_000,
+            base + 50_000
+        );
+        let (snap, total) = parse_poll_output(&input);
+        assert_eq!(total, 5);
+        assert_eq!(snap.power_down_events, 1);
+        assert_eq!(snap.disconnect_events, 1);
+        assert_eq!(snap.link_key_faults, 1);
+        assert_eq!(snap.last_event_id, 200);
+        assert_eq!(snap.last_event_ts, 5);
+    }
+
+    #[test]
+    fn parse_poll_output_whitespace_only_lines_skipped() {
+        let base = 621_355_968_000_000_000i64;
+        let input = format!("\n   \n\t\n5|{}\n", base + 10_000);
+        let (snap, total) = parse_poll_output(&input);
+        assert_eq!(total, 1);
+        assert_eq!(snap.power_down_events, 1);
+    }
+
+    // -----------------------------------------------------------------
+    // dispatch_event: additional edge cases & event-count assertions
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn dispatch_event_power_down_emits_exactly_two_events() {
+        let (tx, mut rx) = broadcast::channel::<IpcEvent>(16);
+        let keepalive = make_keepalive();
+        dispatch_event(EVT_HCI_SIZE_MISMATCH, &tx, &keepalive);
+
+        let mut count = 0;
+        while let Ok(ev) = rx.try_recv() {
+            count += 1;
+            match ev {
+                IpcEvent::BluetoothPowerEvent { event_type, .. } => {
+                    assert_eq!(event_type, "Power_Down");
+                }
+                IpcEvent::LogMessage { level, message, .. } => {
+                    assert_eq!(level, "warn");
+                    assert!(message.contains("Event ID 5"));
+                }
+                _ => panic!("unexpected event variant"),
+            }
+        }
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn dispatch_event_remote_unpaired_emits_disconnected_and_log() {
+        let (tx, mut rx) = broadcast::channel::<IpcEvent>(16);
+        let keepalive = make_keepalive();
+        dispatch_event(EVT_REMOTE_UNPAIRED, &tx, &keepalive);
+
+        let mut got_disconnect = false;
+        let mut got_log = false;
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                IpcEvent::Disconnected { reason } => {
+                    assert!(reason.contains("Event ID 10"));
+                    got_disconnect = true;
+                }
+                IpcEvent::LogMessage { level, message, .. } => {
+                    assert_eq!(level, "warn");
+                    assert!(message.contains("unpaired"));
+                    got_log = true;
+                }
+                _ => panic!("unexpected event variant"),
+            }
+        }
+        assert!(got_disconnect, "expected Disconnected event");
+        assert!(got_log, "expected LogMessage event");
+    }
+
+    #[test]
+    fn dispatch_event_link_key_fault_message_contains_persistence() {
+        let (tx, mut rx) = broadcast::channel::<IpcEvent>(16);
+        let keepalive = make_keepalive();
+        dispatch_event(EVT_LINK_KEY_STORE_FAIL, &tx, &keepalive);
+
+        while let Ok(ev) = rx.try_recv() {
+            if let IpcEvent::LogMessage { message, .. } = ev {
+                assert!(message.contains("persistence"));
+                assert!(message.contains("Event ID 18"));
+                return;
+            }
+        }
+        panic!("expected LogMessage event");
+    }
+
+    #[test]
+    fn dispatch_event_unknown_negative_id_emits_nothing() {
+        let (tx, mut rx) = broadcast::channel::<IpcEvent>(16);
+        let keepalive = make_keepalive();
+        dispatch_event(-1, &tx, &keepalive);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn dispatch_event_repeated_power_downs_all_emitted() {
+        let (tx, mut rx) = broadcast::channel::<IpcEvent>(64);
+        let keepalive = make_keepalive();
+        for _ in 0..3 {
+            dispatch_event(EVT_HCI_SIZE_MISMATCH, &tx, &keepalive);
+        }
+        // Drain all events (each dispatch sends BluetoothPowerEvent + LogMessage).
+        let mut power_count = 0;
+        while let Ok(ev) = rx.try_recv() {
+            if matches!(ev, IpcEvent::BluetoothPowerEvent { .. }) {
+                power_count += 1;
+            }
+        }
+        assert_eq!(power_count, 3);
+    }
+
+    #[test]
+    fn dispatch_event_zero_id_emits_nothing() {
+        let (tx, mut rx) = broadcast::channel::<IpcEvent>(16);
+        let keepalive = make_keepalive();
+        dispatch_event(0, &tx, &keepalive);
+        assert!(rx.try_recv().is_err());
+    }
+
+    // -----------------------------------------------------------------
+    // detect_new_power_down: boundary cases
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn detect_new_power_down_true_for_one_vs_zero() {
+        let m = BthUsbMonitor::new();
+        let snap = BthUsbSnapshot {
+            power_down_events: 1,
+            ..BthUsbSnapshot::default()
+        };
+        assert!(m.detect_new_power_down(&snap, 0));
+    }
+
+    #[test]
+    fn detect_new_power_down_false_when_equal() {
+        let m = BthUsbMonitor::new();
+        let snap = BthUsbSnapshot {
+            power_down_events: 7,
+            ..BthUsbSnapshot::default()
+        };
+        assert!(!m.detect_new_power_down(&snap, 7));
+    }
+
+    #[test]
+    fn detect_new_power_down_false_when_prev_higher() {
+        let m = BthUsbMonitor::new();
+        let snap = BthUsbSnapshot {
+            power_down_events: 2,
+            ..BthUsbSnapshot::default()
+        };
+        assert!(!m.detect_new_power_down(&snap, 100));
+    }
+
+    // -----------------------------------------------------------------
+    // BthUsbSnapshot: partial-equality & manual construction
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn snapshot_with_only_link_key_faults_set() {
+        let s = BthUsbSnapshot {
+            link_key_faults: 9,
+            ..BthUsbSnapshot::default()
+        };
+        assert_eq!(s.link_key_faults, 9);
+        assert_eq!(s.power_down_events, 0);
+        assert_eq!(s.disconnect_events, 0);
+    }
+
+    #[test]
+    fn snapshot_with_max_u32_counters() {
+        let s = BthUsbSnapshot {
+            power_down_events: u32::MAX,
+            disconnect_events: u32::MAX,
+            link_key_faults: u32::MAX,
+            last_event_ts: u64::MAX,
+            last_event_id: i32::MAX,
+        };
+        let c = s.clone();
+        assert_eq!(c.power_down_events, u32::MAX);
+        assert_eq!(c.last_event_ts, u64::MAX);
+        assert_eq!(c.last_event_id, i32::MAX);
+    }
 }

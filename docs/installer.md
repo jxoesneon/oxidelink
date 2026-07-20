@@ -108,14 +108,14 @@ To sign an arbitrary file manually:
 The Tauri updater `endpoints` field in `src-tauri/tauri.conf.json` is configured to:
 
 ```
-https://github.com/oxidelink/oxidelink/releases/latest/download/latest.json
+https://github.com/jxoesneon/oxidelink/releases/latest/download/latest.json
 ```
 
-> **TODO:** Replace `oxidelink/oxidelink` with the actual GitHub owner/repo once the repository is published. The `latest.json` manifest is produced by `scripts/build-release.ps1` (or CI) alongside the installer artifacts and must be uploaded to the release.
+The `latest.json` manifest is produced by `scripts/build-release.ps1` (or CI) alongside the installer artifacts and must be uploaded to the release.
 
 ## Blockers / caveats
 
 - The bundled `HidHideInstaller.exe` and `ViGEmBusSetup.exe` are placeholders. Replace them with real installers before shipping.
 - `signtool.exe` must be available (Windows SDK) or `sign-tauri.ps1` will fail to locate it.
 - Self-signed certificates trigger SmartScreen warnings. Use a real CA-issued certificate for public releases.
-- The updater endpoint URL uses a placeholder GitHub owner/repo (`oxidelink/oxidelink`). Update it before public release.
+- The updater endpoint URL points to `jxoesneon/oxidelink` on GitHub. Update if the repo is transferred or renamed.

@@ -1,0 +1,11 @@
+# Normalize line endings to LF in the repo, check out as-is on Windows.
+* text=auto eol=lf
+
+# Binary files — never touch
+*.png binary
+*.jpg binary
+*.ico binary
+*.pfx binary
+*.cer binary
+*.exe binary
+*.msi binary

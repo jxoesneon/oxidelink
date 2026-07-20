@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OxideLink Overlay</title>
+  <link rel="stylesheet" href="/overlay.css" />
+</head>
+<body>
+  <div id="overlay" class="overlay">
+    <div class="header">
+      <span class="title">OxideLink</span>
+      <span id="fps" class="fps hidden">-- FPS</span>
+    </div>
+    <div class="body">
+      <div id="battery-row" class="row hidden">
+        <span class="label">Battery</span>
+        <div class="bar"><div id="battery-fill" class="fill"></div></div>
+        <span id="battery-value" class="value">--%</span>
+      </div>
+      <div id="profile-row" class="row hidden">
+        <span class="label">Profile</span>
+        <span id="profile-value" class="value">--</span>
+      </div>
+      <div class="row">
+        <span class="label">Status</span>
+        <span id="connection-value" class="value">Disconnected</span>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="btn-recenter" class="action">Recenter Gyro</button>
+      <button id="btn-hide" class="action">Hide Overlay</button>
+    </div>
+  </div>
+  <script type="module" src="/overlay.js"></script>
+</body>
+</html>

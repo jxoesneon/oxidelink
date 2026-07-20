@@ -1,0 +1,9 @@
+[package]
+name = "cemuhook-server-poc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+crc32fast = "1.5"
+byteorder = "1.5"

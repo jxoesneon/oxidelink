@@ -1,0 +1,67 @@
+name: Test OxideLink
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint Rust library
+        working-directory: src-tauri
+        run: cargo clippy --lib -- -D warnings
+
+      - name: Test Rust library
+        working-directory: src-tauri
+        run: cargo test --lib
+
+      - name: Test frontend (Vitest)
+        run: npm test
+
+      - name: Build frontend
+        run: npm run build
+
+  e2e:
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Tauri app (release)
+        run: npm run tauri build
+
+      - name: Install tauri-driver
+        run: cargo install tauri-driver
+
+      - name: Install E2E dependencies
+        working-directory: e2e-tests
+        run: npm ci
+
+      - name: Run E2E tests
+        working-directory: e2e-tests
+        run: npm test

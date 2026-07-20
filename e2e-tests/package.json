@@ -1,0 +1,19 @@
+{
+  "name": "oxidelink-e2e-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "wdio run wdio.conf.js",
+    "test:headed": "wdio run wdio.conf.js --headed"
+  },
+  "dependencies": {
+    "@wdio/cli": "^9.19.0"
+  },
+  "devDependencies": {
+    "@wdio/local-runner": "^9.19.0",
+    "@wdio/mocha-framework": "^9.19.0",
+    "@wdio/spec-reporter": "^9.19.0",
+    "@wdio/tauri-service": "^1.2.0"
+  }
+}

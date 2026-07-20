@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+src-tauri/target/
+research-pocs/*/target/
+
+# Logs and temp files
+*.log
+*.txt
+!CHANGELOG.md
+!src-tauri/Cargo.lock
+!research-pocs/*/Cargo.lock
+
+# Environment and secrets
+.env
+.env.local
+src-tauri/certs/*.key
+src-tauri/certs/*.pfx
+src-tauri/certs/*.txt
+src-tauri/target/*.key
+src-tauri/target/*.pass
+
+# IDE / tool caches
+.vscode/
+.idea/
+.mempalace/
+.playwright-mcp/
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Runtime artifacts
+src-tauri/oxidelink-stderr.txt
+src-tauri/oxidelink-stdout.txt
+src-tauri/updater.json
+
+# E2E test dependencies (installed separately)
+e2e-tests/node_modules/

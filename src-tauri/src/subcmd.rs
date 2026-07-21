@@ -112,6 +112,10 @@ pub const USB_CMD_BAUDRATE_3M: u8 = 0x03;
 pub const USB_CMD_NO_TIMEOUT: u8 = 0x04;
 /// Enable timeout — re-enable the USB timeout (used on disconnect).
 pub const USB_CMD_EN_TIMEOUT: u8 = 0x05;
+/// Reset — sent after enable-timeout on disconnect to fully reset the
+/// USB connection. BetterJoy sends this after 0x05 to ensure the STM32
+/// cleanly reverts to Bluetooth mode.
+pub const USB_CMD_RESET: u8 = 0x06;
 /// USB handshake response magic — the controller returns this to ack.
 pub const USB_HANDSHAKE_ACK: u8 = 0x81;
 
@@ -1302,6 +1306,15 @@ pub fn build_usb_no_timeout() -> Vec<u8> {
 /// controller to fall back to Bluetooth mode.
 pub fn build_usb_enable_timeout() -> Vec<u8> {
     build_usb_cmd(USB_CMD_EN_TIMEOUT, &[0x00])
+}
+
+/// Build the USB reset command (0x80 0x06).
+///
+/// Sent after enable-timeout on disconnect to fully reset the USB
+/// connection. BetterJoy sends both 0x05 and 0x06 on disconnect to
+/// ensure the STM32 cleanly reverts to Bluetooth mode.
+pub fn build_usb_reset() -> Vec<u8> {
+    build_usb_cmd(USB_CMD_RESET, &[0x01])
 }
 
 // ===========================================================================

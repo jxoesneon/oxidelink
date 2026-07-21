@@ -332,6 +332,25 @@ impl DeviceLoop {
         // disappears.
         if conn_type == ConnectionType::Usb {
             info!("USB connection detected — sending USB handshake sequence");
+            // USB handshake sequence per dekuNukem's reverse engineering notes
+            // (https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering/blob/master/USB-HID-Notes.md)
+            // and matching the Linux kernel hid-nintendo.c driver.
+            //
+            // The STM32 bridge MCU requires a specific 4-step sequence:
+            //   1. 0x80 0x02 — Handshake (establish USB comms with STM32)
+            //   2. 0x80 0x03 — Baudrate 3Mbit (switch UART to 3 Mbit/s)
+            //   3. 0x80 0x02 — Handshake AGAIN (required for baud switch to work)
+            //   4. 0x80 0x04 — No timeout (prevent USB→Bluetooth fallback)
+            //
+            // The second handshake (step 3) is critical: per dekuNukem,
+            // "A second handshake is required for the baud switch to work."
+            // Without it, the baudrate switch doesn't fully complete and
+            // subsequent standard subcommands (set-report-mode, etc.) are
+            // unreliable or silently ignored.
+            //
+            // Both the Linux driver and BetterJoy use synchronous sends with
+            // 100ms-1s timeouts. Our async architecture uses fixed sleeps
+            // between commands; 100ms matches BetterJoy's read timeout.
             // 1. Handshake — establish USB communication with the STM32.
             if let Err(err) = cmd_tx.try_send(DeviceCommand::Write(subcmd::build_usb_handshake())) {
                 warn!("Failed to send USB handshake command: {}", err);
@@ -343,22 +362,19 @@ impl DeviceLoop {
                 warn!("Failed to send USB baudrate command: {}", err);
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
-            // 3. No timeout — prevent USB→Bluetooth fallback.
+            // 3. Second handshake — required for the baud switch to take effect.
+            //    Without this, the controller may not accept standard subcommands.
+            if let Err(err) = cmd_tx.try_send(DeviceCommand::Write(subcmd::build_usb_handshake())) {
+                warn!("Failed to send second USB handshake command: {}", err);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            // 4. No timeout — prevent USB→Bluetooth fallback.
             if let Err(err) = cmd_tx.try_send(DeviceCommand::Write(subcmd::build_usb_no_timeout()))
             {
                 warn!("Failed to send USB no-timeout command: {}", err);
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
-            info!("USB handshake sequence sent (handshake + baudrate + no-timeout)");
-
-            // Wait for the STM32 bridge MCU to finish processing the USB
-            // handshake before sending standard subcommands. The controller
-            // takes ~3 seconds to ACK the handshake; if standard subcommands
-            // (set-report-mode, get-device-info, etc.) arrive during the
-            // handshake, they are silently ignored and the controller never
-            // starts streaming 0x30 standard reports.
-            tokio::time::sleep(Duration::from_millis(3000)).await;
-            info!("USB handshake settle period elapsed — sending standard subcommands");
+            info!("USB handshake sequence sent (handshake + baudrate + handshake + no-timeout)");
         }
 
         // Send the set-input-report-mode subcommand (0x03 → 0x30) so the
@@ -380,15 +396,18 @@ impl DeviceLoop {
         let cmd_tx_for_cleanup = cmd_tx.clone();
         self.dispatch_loop(&mut msg_rx, cmd_tx, conn_type).await;
 
-        // USB graceful disconnect: re-enable the USB timeout so the
-        // STM32 bridge MCU can revert the controller to Bluetooth mode.
-        // Without this, the controller may stay stuck in USB mode after
-        // the host closes the HID device.
+        // USB graceful disconnect: re-enable the USB timeout and send a
+        // reset so the STM32 bridge MCU cleanly reverts the controller to
+        // Bluetooth mode. BetterJoy sends both 0x05 (enable-timeout) and
+        // 0x06 (reset) on disconnect.
         if conn_type == ConnectionType::Usb {
-            info!("Sending USB enable-timeout for graceful disconnect");
+            info!("Sending USB enable-timeout + reset for graceful disconnect");
             let _ = cmd_tx_for_cleanup
                 .try_send(DeviceCommand::Write(subcmd::build_usb_enable_timeout()));
-            // Give the blocking thread time to drain the command before
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let _ = cmd_tx_for_cleanup
+                .try_send(DeviceCommand::Write(subcmd::build_usb_reset()));
+            // Give the blocking thread time to drain the commands before
             // we await its completion.
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
@@ -415,7 +434,14 @@ impl DeviceLoop {
         let slot = self.slot;
         let was_usb = conn_type == ConnectionType::Usb;
         tokio::spawn(async move {
-            // USB: wait 6s for the STM32 to revert to Bluetooth.
+            // USB: wait for the STM32 to revert to Bluetooth mode.
+            // The exact USB timeout is not publicly documented. dekuNukem's
+            // notes say the controller "will time out and reset the
+            // connection" if not sent a USB HID packet within "a certain
+            // amount of time" after 0x05 (enable-timeout). The existing
+            // code comment estimated ~5 seconds. We use 6 seconds as a
+            // safety margin. The manager loop's 2-second rescan will pick
+            // up the BT HID device once Windows establishes the connection.
             // BT: wait 2s before retrying (the controller may still be
             // in its disconnect window).
             let delay = if was_usb {

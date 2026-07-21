@@ -1826,6 +1826,27 @@
               <span class="metric-label">Scale</span>
               <input type="number" id="overlay-scale" min="0.25" max="4" step="0.25" value="1" />
             </div>
+            <div class="metric toggle-row-left">
+              <label class="toggle-switch">
+                <input type="checkbox" id="overlay-show-battery" />
+                <span class="toggle-slider"></span>
+              </label>
+              <label for="overlay-show-battery" class="toggle-label">Show battery</label>
+            </div>
+            <div class="metric toggle-row-left">
+              <label class="toggle-switch">
+                <input type="checkbox" id="overlay-show-profile" />
+                <span class="toggle-slider"></span>
+              </label>
+              <label for="overlay-show-profile" class="toggle-label">Show profile name</label>
+            </div>
+            <div class="metric toggle-row-left">
+              <label class="toggle-switch">
+                <input type="checkbox" id="overlay-show-fps" />
+                <span class="toggle-slider"></span>
+              </label>
+              <label for="overlay-show-fps" class="toggle-label">Show FPS counter</label>
+            </div>
             <div style="display:flex;gap:0.5rem;margin-top:0.5rem;flex-wrap:wrap">
               <button class="btn" id="btn-overlay-load">Load Config</button>
               <button class="btn" id="btn-overlay-save">Save Config</button>
@@ -1859,6 +1880,13 @@
               <span class="metric-label">Username</span>
               <input type="text" id="cloud-username" placeholder="Username" />
             </div>
+            <div class="metric toggle-row-left">
+              <label class="toggle-switch">
+                <input type="checkbox" id="cloud-accepted-terms" />
+                <span class="toggle-slider"></span>
+              </label>
+              <label for="cloud-accepted-terms" class="toggle-label">I accept the community sharing terms</label>
+            </div>
             <div style="display:flex;gap:0.5rem;margin-top:0.5rem;flex-wrap:wrap">
               <button class="btn" id="btn-cloud-load">Load Config</button>
               <button class="btn" id="btn-cloud-save">Save Config</button>
@@ -1870,7 +1898,7 @@
               <input type="text" id="cloud-share-code" placeholder="Enter code" />
               <button class="btn" id="btn-cloud-download">Download</button>
             </div>
-            <div id="cloud-list" style="margin-top:0.5rem"></div>
+            <div id="cloud-list" style="margin-top:0.5rem;display:flex;flex-direction:column;gap:0.25rem"></div>
           </section>
         </main>
       </div><!-- /tab-cloud -->

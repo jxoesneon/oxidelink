@@ -3460,6 +3460,9 @@ el("btn-tray-refresh")?.addEventListener("click", loadTrayTab);
 el("btn-tray-apply")?.addEventListener("click", applyTraySettings);
 el("btn-tray-show")?.addEventListener("click", () => setTrayVisibility(true));
 el("btn-tray-hide")?.addEventListener("click", () => setTrayVisibility(false));
+// Auto-apply toggle changes for immediate feedback.
+el("tray-auto-start")?.addEventListener("change", applyTraySettings);
+el("tray-minimize")?.addEventListener("change", applyTraySettings);
 
 // =============================================================================
 // Multi-controller tab
@@ -3489,10 +3492,10 @@ async function setActiveControllerSlot() {
   if (!invoke) return;
   const slot = parseInt(el("multi-slot")?.value || "0", 10);
   try {
-    await invoke("set_selected_slot", { slot });
+    await invoke("set_active_slot", { slot });
     appendLog("[MULTI] Active slot set to " + slot, "hid-line");
   } catch (e) {
-    handleError("set_selected_slot failed", e);
+    handleError("set_active_slot failed", e);
   }
 }
 
@@ -3509,6 +3512,8 @@ async function rescanControllers() {
 el("btn-multi-list")?.addEventListener("click", loadControllers);
 el("btn-multi-active")?.addEventListener("click", setActiveControllerSlot);
 el("btn-multi-rescan")?.addEventListener("click", rescanControllers);
+// Auto-apply slot selection when the dropdown changes.
+el("multi-slot")?.addEventListener("change", setActiveControllerSlot);
 
 // =============================================================================
 // DSU Server tab
@@ -3800,6 +3805,9 @@ async function loadOverlay() {
     el("overlay-opacity").value = cfg.opacity ?? 0.9;
     el("overlay-position").value = cfg.position || "top-left";
     el("overlay-scale").value = cfg.scale ?? 1;
+    el("overlay-show-battery").checked = cfg.show_battery ?? true;
+    el("overlay-show-profile").checked = cfg.show_profile ?? true;
+    el("overlay-show-fps").checked = cfg.show_fps ?? false;
   } catch (e) {
     appendLog("[ERR] loadOverlay: " + e, "warn-line");
   }
@@ -3814,6 +3822,9 @@ async function saveOverlay() {
     const opacity = parseFloat(el("overlay-opacity").value);
     const position = el("overlay-position").value;
     const scale = parseFloat(el("overlay-scale").value);
+    const show_battery = el("overlay-show-battery").checked;
+    const show_profile = el("overlay-show-profile").checked;
+    const show_fps = el("overlay-show-fps").checked;
     await invoke("set_overlay_config", {
       ...cfg,
       enabled,
@@ -3821,6 +3832,9 @@ async function saveOverlay() {
       opacity,
       position,
       scale,
+      show_battery,
+      show_profile,
+      show_fps,
     });
     appendLog("[OVERLAY] Config saved", "hid-line");
   } catch (e) {
@@ -3853,6 +3867,7 @@ async function loadCloud() {
     el("cloud-endpoint").value = cfg.endpoint || "";
     el("cloud-api-key").value = cfg.api_key || "";
     el("cloud-username").value = cfg.username || "";
+    el("cloud-accepted-terms").checked = cfg.accepted_terms ?? false;
   } catch (e) {
     appendLog("[ERR] loadCloud: " + e, "warn-line");
   }
@@ -3866,7 +3881,8 @@ async function saveCloud() {
     const endpoint = el("cloud-endpoint").value.trim();
     const api_key = el("cloud-api-key").value.trim() || null;
     const username = el("cloud-username").value.trim();
-    await invoke("set_cloud_config", { ...cfg, enabled, endpoint, api_key, username });
+    const accepted_terms = el("cloud-accepted-terms").checked;
+    await invoke("set_cloud_config", { ...cfg, enabled, endpoint, api_key, username, accepted_terms });
     appendLog("[CLOUD] Config saved", "hid-line");
   } catch (e) {
     appendLog("[ERR] saveCloud: " + e, "warn-line");
@@ -3880,15 +3896,45 @@ async function listCommunityProfiles() {
     const list = el("cloud-list");
     if (list) {
       list.innerHTML = "";
-      (profiles || []).forEach((p) => {
-        const div = document.createElement("div");
-        div.textContent = `${p.name} by ${p.author} — ${p.downloads ?? 0} downloads`;
-        list.appendChild(div);
-      });
+      if (!profiles || profiles.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "metric-label";
+        empty.textContent = "No community profiles found.";
+        list.appendChild(empty);
+      } else {
+        profiles.forEach((p) => {
+          const row = document.createElement("div");
+          row.className = "glass panel";
+          row.style.cssText = "padding:8px 12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap";
+          const info = document.createElement("span");
+          info.style.flex = "1";
+          info.innerHTML = `<strong>${escapeHtml(p.name)}</strong> by ${escapeHtml(p.author)}` +
+            (p.description ? ` — ${escapeHtml(p.description)}` : "") +
+            ` · ${p.downloads ?? 0} downloads` +
+            (p.rating ? ` · ★ ${p.rating.toFixed(1)}` : "");
+          const dlBtn = document.createElement("button");
+          dlBtn.className = "btn";
+          dlBtn.textContent = "Download";
+          dlBtn.addEventListener("click", () => downloadProfileById(p.id, p.name));
+          row.appendChild(info);
+          row.appendChild(dlBtn);
+          list.appendChild(row);
+        });
+      }
     }
     appendLog("[CLOUD] Listed " + (profiles?.length || 0) + " profiles", "hid-line");
   } catch (e) {
     handleError("listCommunityProfiles failed", e);
+  }
+}
+
+async function downloadProfileById(id, name) {
+  if (!invoke) return;
+  try {
+    const profile = await invoke("download_profile", { id });
+    appendLog("[CLOUD] Downloaded " + (profile?.name || name || id), "hid-line");
+  } catch (e) {
+    handleError("downloadProfileById failed", e);
   }
 }
 

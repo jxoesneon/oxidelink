@@ -32,7 +32,6 @@ mod updater;
 mod vixinput;
 mod xinput;
 
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -47,7 +46,7 @@ use bthusb_monitor::BthUsbMonitor;
 use device_loop::DeviceLoop;
 use keepalive::KeepAliveManager;
 use mock::MockGenerator;
-use state::{AppConfig, AppCtx, IpcEvent, SharedState, VirtualControllerType, CONTROLLER_SLOTS};
+use state::{AppConfig, AppCtx, IpcEvent, SharedState, VirtualControllerType};
 use vixinput::VirtualXInput;
 
 // `imu` and `subcmd` are declared as `mod` above and are referenced directly
@@ -63,16 +62,6 @@ pub const IPC_WS_ADDR: &str = "127.0.0.1:9001";
 #[tauri::command]
 fn get_controller_state(ctx: State<'_, AppCtx>) -> state::ControllerState {
     ctx.shared.active_controller().clone()
-}
-
-#[tauri::command]
-fn set_selected_slot(slot: u8, ctx: State<'_, AppCtx>) -> Result<(), String> {
-    if slot as usize >= CONTROLLER_SLOTS {
-        return Err(format!("Invalid slot {}", slot));
-    }
-    ctx.shared.selected_slot.store(slot, Ordering::Relaxed);
-    info!("Selected controller slot set to {}", slot);
-    Ok(())
 }
 
 #[tauri::command]
@@ -1478,7 +1467,6 @@ fn main() {
             device_loop::get_controllers,
             device_loop::get_controller,
             device_loop::set_active_slot,
-            set_selected_slot,
             device_loop::rescan_controllers,
             // Overlay
             overlay::get_overlay_config,

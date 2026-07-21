@@ -3,8 +3,10 @@
 
 import { escapeHtml, formatLogTimestamp, logLevelClass, buildBindingAction, parseBindingAction, RollingAverage, pushBuffer, buildLedMask, getCheckedLedIndices } from "./utils.js";
 
-// Must match `IPC_WS_ADDR` in `src-tauri/src/main.rs`.
-const WS_URL = "ws://127.0.0.1:9001";
+// Fallback WS URL used when Tauri invoke is unavailable (e.g. browser dev mode)
+// or when get_ws_addr has not resolved yet. Must match `IPC_WS_ADDR` in
+// `src-tauri/src/main.rs`.
+const WS_URL_FALLBACK = "ws://127.0.0.1:9001";
 const invoke = window.__TAURI__?.core?.invoke ?? null;
 
 const el = (id) => document.getElementById(id);
@@ -425,24 +427,70 @@ function updateWireframe(data) {
   }
 }
 
-function handleEvent(ev) {
-  switch (ev.type) {
-    case "ControllerState":
+// High-frequency event batching: buffer the latest ControllerState, ImuData,
+// and ConnectionQuality events and process them in a requestAnimationFrame
+// loop. This prevents DOM backpressure from stalling the WebSocket at
+// ~150 events/sec. Low-frequency events are handled immediately.
+let _pendingState = null;
+let _pendingImu = null;
+let _pendingConnQuality = null;
+let _rafScheduled = false;
+
+function _flushPendingHighFreq() {
+  _rafScheduled = false;
+  try {
+    if (_pendingState) {
+      const ev = _pendingState;
+      _pendingState = null;
       setConnection(ev.data.connected ? "connected" : "disconnected");
       updateBattery(ev.data.battery_percent, ev.data.charging);
       signalAvg.push(ev.data.signal_strength);
       const sigAvg = signalAvg.avg();
       el("signal-value").textContent = (sigAvg !== null ? sigAvg.toFixed(1) : ev.data.signal_strength) + " dBm";
       updateWireframe(ev.data);
-      // Battery voltage in mV (granular, from subcommand 0x50)
       if (ev.data.battery_voltage_mv && ev.data.battery_voltage_mv > 0) {
         const bvEl = el("battery-voltage");
         if (bvEl) bvEl.textContent = ev.data.battery_voltage_mv + " mV";
       }
-      // Update NFC scan count from controller state
       if (ev.data.nfc && ev.data.nfc.scan_count !== undefined) {
         setText("nfc-scan-count", String(ev.data.nfc.scan_count));
       }
+    }
+    if (_pendingImu) {
+      const ev = _pendingImu;
+      _pendingImu = null;
+      updateImuDisplay(ev);
+    }
+    if (_pendingConnQuality) {
+      const ev = _pendingConnQuality;
+      _pendingConnQuality = null;
+      updateConnectionQuality(ev.data);
+    }
+  } catch (e) {
+    appendLog("[ERR] _flushPendingHighFreq: " + e + " — " + (e.stack || "").split("\n")[1], "warn-line");
+  }
+}
+
+function _scheduleFlush() {
+  if (!_rafScheduled) {
+    _rafScheduled = true;
+    requestAnimationFrame(_flushPendingHighFreq);
+  }
+}
+
+function handleEvent(ev) {
+  switch (ev.type) {
+    case "ControllerState":
+      _pendingState = ev;
+      _scheduleFlush();
+      break;
+    case "ImuData":
+      _pendingImu = ev;
+      _scheduleFlush();
+      break;
+    case "ConnectionQuality":
+      _pendingConnQuality = ev;
+      _scheduleFlush();
       break;
     case "KeepAliveStatus":
       updateKeepAlive(ev.data);
@@ -476,9 +524,6 @@ function handleEvent(ev) {
     case "DeviceInfo":
       updateDeviceInfo(ev.data);
       break;
-    case "ImuData":
-      updateImuDisplay(ev);
-      break;
     case "CalibrationData":
       updateStickCalibration(ev);
       break;
@@ -493,9 +538,6 @@ function handleEvent(ev) {
       break;
     case "SubcommandReply":
       appendLog(`[SUBCMD] 0x${(ev.subcmd_id || 0).toString(16).padStart(2, "0")}: ack=0x${(ev.ack || 0).toString(16).padStart(2, "0")}`);
-      break;
-    case "ConnectionQuality":
-      updateConnectionQuality(ev.data);
       break;
     case "BatteryState":
       updateBatteryEnhanced(ev);
@@ -548,30 +590,38 @@ async function refreshTrayState() {
 
 function connect() {
   setConnection("connecting");
-  let ws;
-  try {
-    ws = new WebSocket(WS_URL);
-  } catch (e) {
-    appendLog("[ERR] WebSocket unavailable: " + e, "warn-line");
-    setTimeout(connect, 2000);
-    return;
-  }
-  ws.onopen = () => appendLog("[OK] IPC connected to ws://127.0.0.1:9001");
-  ws.onmessage = (msg) => {
+  // Resolve the WS address from the backend when running inside Tauri so the
+  // frontend doesn't need to hardcode the port. Fall back to the compile-time
+  // default when invoke is unavailable (e.g. browser dev mode).
+  const addrPromise = invoke
+    ? invoke("get_ws_addr").then((a) => "ws://" + a).catch(() => WS_URL_FALLBACK)
+    : Promise.resolve(WS_URL_FALLBACK);
+  addrPromise.then((wsUrl) => {
+    let ws;
     try {
-      handleEvent(JSON.parse(msg.data));
+      ws = new WebSocket(wsUrl);
     } catch (e) {
-      appendLog("[ERR] Bad IPC payload: " + e, "warn-line");
+      appendLog("[ERR] WebSocket unavailable: " + e, "warn-line");
+      setTimeout(connect, 2000);
+      return;
     }
-  };
-  ws.onclose = () => {
-    setConnection("disconnected");
-    appendLog("[WARN] IPC closed — retrying in 2s", "warn-line");
-    setTimeout(connect, 2000);
-  };
-  ws.onerror = () => {
-    appendLog("[ERR] IPC socket error", "warn-line");
-  };
+    ws.onopen = () => appendLog("[OK] IPC connected to " + wsUrl);
+    ws.onmessage = (msg) => {
+      try {
+        handleEvent(JSON.parse(msg.data));
+      } catch (e) {
+        appendLog("[ERR] Bad IPC payload: " + e, "warn-line");
+      }
+    };
+    ws.onclose = () => {
+      setConnection("disconnected");
+      appendLog("[WARN] IPC closed — retrying in 2s", "warn-line");
+      setTimeout(connect, 2000);
+    };
+    ws.onerror = () => {
+      appendLog("[ERR] IPC socket error", "warn-line");
+    };
+  });
 }
 
 // Config controls — push updates via Tauri invoke (if available) or just local.
@@ -686,16 +736,112 @@ if (invoke) {
     }
   }, 1000);
 
-  // Fetch calibration data on load (the CalibrationData event may have fired
-  // before the WebSocket connected, so we poll it once).
+  // One-shot controller state poll on startup (the ControllerState WS event
+  // may fire before the WebSocket connects). Do NOT poll continuously — it
+  // causes the connection chip to flash repeatedly (pulsating effect).
   setTimeout(async () => {
     try {
-      const cal = await invoke("get_calibration_data");
-      if (cal) updateStickCalibration({ stick: cal });
+      const state = await invoke("get_controller_state");
+      if (state.connected) {
+        setConnection("connected");
+        updateBattery(state.battery_percent, state.charging);
+      }
+    } catch (e) {
+      /* ignore — backend may not be ready yet */
+    }
+  }, 1500);
+
+  // Fetch calibration data on load (the CalibrationData event may have fired
+  // before the WebSocket connected, so we poll it once). The CalibrationData
+  // event includes both stick and IMU calibration, so we fetch both and
+  // combine them into the expected event shape.
+  setTimeout(async () => {
+    try {
+      const [stick, imu] = await Promise.all([
+        invoke("get_calibration_data"),
+        invoke("get_imu_calibration"),
+      ]);
+      if (stick || imu) updateStickCalibration({ stick, imu });
     } catch (e) {
       /* ignore — not connected yet */
     }
   }, 2000);
+
+  // Fetch device info on load (the DeviceInfo event may have fired before
+  // the WebSocket connected, so we poll it once). This populates the Device
+  // Info and SPI Flash panels in the Diagnostics tab.
+  setTimeout(async () => {
+    try {
+      const info = await invoke("get_device_info");
+      if (info) updateDeviceInfo(info);
+    } catch (e) {
+      /* ignore — not connected yet */
+    }
+  }, 2500);
+
+  // Fetch keepalive status on load (the KeepAliveStatus event fires every 3s,
+  // but the first one may not have arrived yet). This populates the keepalive
+  // status chip immediately instead of showing "Idle / — ms / 0".
+  setTimeout(async () => {
+    try {
+      const ka = await invoke("get_keepalive_status");
+      if (ka) updateKeepAlive(ka);
+    } catch (e) {
+      /* ignore — backend may not be ready yet */
+    }
+  }, 1500);
+
+  // Fetch home light state on load so the UI reflects the actual controller
+  // state instead of defaults. The HomeLightChanged event only fires when the
+  // user changes the home light, so without this poll the UI shows defaults.
+  setTimeout(async () => {
+    try {
+      const hl = await invoke("get_home_light");
+      if (hl) {
+        const patternNames = ["solid", "breathing", "blink", "fade", "wave"];
+        syncHomeLight({
+          enabled: hl.enabled,
+          brightness: hl.brightness,
+          pattern: patternNames[hl.pulse_pattern] || "solid",
+        });
+      }
+    } catch (e) {
+      /* ignore — not connected yet */
+    }
+  }, 2500);
+
+  // Fetch IMU sensitivity on load so the dropdowns reflect the actual
+  // controller state instead of defaults. There is no IPC event for IMU
+  // sensitivity changes, so without this poll the UI shows defaults.
+  setTimeout(async () => {
+    try {
+      const [gyroRange, accelRange] = await invoke("get_imu_sensitivity");
+      const gyroSel = el("imu-gyro-range");
+      const accelSel = el("imu-accel-range");
+      if (gyroSel && gyroRange != null) gyroSel.value = String(gyroRange);
+      if (accelSel && accelRange != null) accelSel.value = String(accelRange);
+    } catch (e) {
+      /* ignore — not connected yet */
+    }
+  }, 2500);
+
+  // Fetch player lights on load so the LED indicators reflect the actual
+  // controller state. The PlayerLightsChanged event only fires when the user
+  // changes the player lights, so without this poll the UI shows defaults.
+  setTimeout(async () => {
+    try {
+      const lights = await invoke("get_player_lights");
+      if (lights) {
+        // Update LED toggles to match the controller's current state.
+        for (let i = 0; i < 4; i++) {
+          const toggle = el(`led-toggle-${i + 1}`);
+          if (toggle) toggle.checked = (lights.led_mask & (1 << i)) !== 0;
+        }
+      }
+    } catch (e) {
+      /* ignore — not connected yet */
+    }
+  }, 2500);
 }
 
 // =============================================================================
@@ -1691,6 +1837,11 @@ el("btn-rumble-test")?.addEventListener("click", async () => {
   const freq = parseInt(el("rumble-freq")?.value || "300", 10);
   if (invoke) {
     try {
+      // Ensure vibration is enabled on the controller (subcommand 0x48).
+      // The device loop's rumble refresh only fires if vibration_enabled
+      // is true, which is set by enable_vibration. Without this, the
+      // single rumble report from send_rumble is too brief to notice.
+      await invoke("enable_vibration", { enabled: true });
       await invoke("send_rumble", {
         leftAmp,
         rightAmp,
@@ -1704,6 +1855,28 @@ el("btn-rumble-test")?.addEventListener("click", async () => {
   }
 });
 
+// Wire the "Vibration Enable" toggle to the backend so the device loop's
+// rumble refresh starts/stops. Without this, the toggle only affected the
+// "Test Rumble" button's local guard, not the actual controller state.
+el("rumble-enable")?.addEventListener("change", async (e) => {
+  if (!invoke) return;
+  try {
+    await invoke("enable_vibration", { enabled: e.target.checked });
+    appendLog(`[Rumble] vibration ${e.target.checked ? "enabled" : "disabled"}`);
+    if (!e.target.checked) {
+      // When disabling, also zero out the rumble amplitudes so the motors stop.
+      await invoke("send_rumble", {
+        leftAmp: 0,
+        rightAmp: 0,
+        leftFreq: 160,
+        rightFreq: 160,
+      });
+    }
+  } catch (err) {
+    appendLog("[ERR] enable_vibration failed: " + err, "warn-line");
+  }
+});
+
 el("btn-rumble-stop")?.addEventListener("click", async () => {
   if (invoke) {
     try {
@@ -1713,6 +1886,9 @@ el("btn-rumble-stop")?.addEventListener("click", async () => {
         leftFreq: 160,
         rightFreq: 160,
       });
+      // Disable vibration on the controller so the device loop stops
+      // sending rumble refresh reports.
+      await invoke("enable_vibration", { enabled: false });
       appendLog("[Rumble] stopped");
     } catch (e) {
       appendLog("[ERR] stop rumble failed: " + e, "warn-line");

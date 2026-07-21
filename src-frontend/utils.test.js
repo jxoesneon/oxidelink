@@ -125,6 +125,22 @@ describe("parseBindingAction", () => {
       interval: 100,
     });
   });
+
+  it("handles missing button in toggle value", () => {
+    expect(parseBindingAction({ type: "toggle", value: {} })).toEqual({
+      mode: "toggle",
+      target: "a",
+      interval: 100,
+    });
+  });
+
+  it("handles falsey button value in button action", () => {
+    expect(parseBindingAction({ type: "button", value: "" })).toEqual({
+      mode: "normal",
+      target: "a",
+      interval: 100,
+    });
+  });
 });
 
 describe("RollingAverage", () => {
@@ -164,6 +180,31 @@ describe("RollingAverage", () => {
     for (let i = 0; i < 5; i++) ra.push(50);
     ra.push(50);
     expect(ra.samples.length).toBe(6);
+  });
+
+  it("computes median with even number of samples", () => {
+    const ra = new RollingAverage(10000, Infinity);
+    ra.push(10);
+    ra.push(20);
+    ra.push(30);
+    ra.push(40);
+    // Even count: median = (20 + 30) / 2 = 25
+    expect(ra.median()).toBe(25);
+    expect(ra.avg()).toBeCloseTo(25);
+  });
+
+  it("suppresses spikes with even sample count (exercises _mad even branch)", () => {
+    const ra = new RollingAverage(10000, 3.0);
+    // Push 6 varied values so _mad is called with even count
+    ra.push(96);
+    ra.push(97);
+    ra.push(98);
+    ra.push(99);
+    ra.push(100);
+    ra.push(101);
+    const beforeSpike = ra.samples.length;
+    ra.push(10000); // spike should be rejected
+    expect(ra.samples.length).toBe(beforeSpike);
   });
 });
 
@@ -251,5 +292,18 @@ describe("getCheckedLedIndices", () => {
   it("handles missing elements gracefully", () => {
     const noElements = () => null;
     expect(getCheckedLedIndices(noElements)).toEqual([]);
+  });
+
+  it("uses document.getElementById by default", () => {
+    // Set up DOM checkboxes in jsdom
+    document.body.innerHTML = `
+      <input type="checkbox" id="led-toggle-1" checked>
+      <input type="checkbox" id="led-toggle-2">
+      <input type="checkbox" id="led-toggle-3" checked>
+      <input type="checkbox" id="led-toggle-4">
+    `;
+    expect(buildLedMask()).toBe(0b0101);
+    expect(getCheckedLedIndices()).toEqual([1, 3]);
+    document.body.innerHTML = "";
   });
 });

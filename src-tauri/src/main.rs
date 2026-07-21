@@ -36,7 +36,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use log::{info, warn};
+use log::{debug, info, warn};
 use parking_lot::RwLock;
 use tauri::{Manager, State};
 use tokio::net::TcpListener;
@@ -643,6 +643,7 @@ fn set_nfc_mode(ctx: State<'_, AppCtx>, mode: u8) -> Result<bool, String> {
     let counter = ctx.shared.next_packet_number();
     let pkt = subcmd::build_set_mcu_config_subcmd(counter, nfc_mode);
     ctx.shared.send_device_command(pkt)?;
+    let _ = ctx.tx.send(IpcEvent::NfcModeChanged { mode: nfc_mode });
     Ok(true)
 }
 
@@ -714,6 +715,17 @@ fn set_report_mode(ctx: State<'_, AppCtx>, mode: u8) -> Result<u8, String> {
 }
 
 #[tauri::command]
+fn get_home_light(ctx: State<'_, AppCtx>) -> state::HomeLight {
+    ctx.shared.active_controller().home_light.clone()
+}
+
+#[tauri::command]
+fn get_imu_sensitivity(ctx: State<'_, AppCtx>) -> (u8, u8) {
+    let ctrl = ctx.shared.active_controller();
+    (ctrl.imu_gyro_range, ctrl.imu_accel_range)
+}
+
+#[tauri::command]
 fn get_player_lights(ctx: State<'_, AppCtx>) -> Result<state::PlayerLights, String> {
     // Trigger a player lights query — the reply handler in device_loop
     // updates ControllerState.player_lights asynchronously.
@@ -763,7 +775,15 @@ async fn run_ws_server(addr: &str, tx: broadcast::Sender<IpcEvent>) {
             let mut rx = tx.subscribe();
 
             // Pump IPC events to this client.
+            //
+            // The device loop emits ~150 events/second (ControllerState at 60 Hz,
+            // ImuData at 30 Hz, ConnectionQuality at 60 Hz). We send every event
+            // and rely on the frontend to batch DOM updates via
+            // requestAnimationFrame to avoid main-thread backpressure.
+            // Lag warnings are logged at debug level (after the first) to avoid
+            // GB-sized log files when the frontend briefly falls behind.
             let pump = tokio::spawn(async move {
+                let mut lag_warned = false;
                 loop {
                     match rx.recv().await {
                         Ok(ev) => {
@@ -780,10 +800,15 @@ async fn run_ws_server(addr: &str, tx: broadcast::Sender<IpcEvent>) {
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
-                            // The receiver fell behind (buffer overflow).
-                            // Skip the missed events and keep going — dropping
-                            // some updates is better than killing the feed.
-                            warn!("WS broadcast receiver lagged by {} events, resuming", n);
+                            if !lag_warned {
+                                warn!(
+                                    "WS broadcast receiver lagged by {} events (subsequent lags at debug)",
+                                    n
+                                );
+                                lag_warned = true;
+                            } else {
+                                debug!("WS broadcast receiver lagged by {} events", n);
+                            }
                             continue;
                         }
                         Err(broadcast::error::RecvError::Closed) => break,
@@ -1331,9 +1356,11 @@ fn main() {
             get_calibration_data,
             get_imu_calibration,
             set_imu_sensitivity,
+            get_imu_sensitivity,
             get_battery_voltage,
             set_report_mode,
             get_player_lights,
+            get_home_light,
             recalibrate_sticks,
             refresh_spi_diagnostics,
             reset_factory_calibration,

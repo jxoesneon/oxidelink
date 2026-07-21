@@ -106,11 +106,22 @@ impl KeepAliveManager {
                 data: self_clone.state.read().clone(),
             });
 
-            loop {
-                let interval_ms = self_clone.current_interval();
-                let mut ticker = interval(Duration::from_millis(interval_ms));
+            let mut current_ticker_ms = self_clone.current_interval();
+            let mut ticker = interval(Duration::from_millis(current_ticker_ms));
+            // Consume the immediate first tick so the first real ping happens
+            // after one interval, not instantly.
+            ticker.tick().await;
 
+            loop {
                 ticker.tick().await;
+
+                let interval_ms = self_clone.current_interval();
+                // Recreate the ticker only when the configured interval changes.
+                if interval_ms != current_ticker_ms {
+                    current_ticker_ms = interval_ms;
+                    ticker = interval(Duration::from_millis(current_ticker_ms));
+                    ticker.tick().await; // consume immediate first tick of new ticker
+                }
 
                 let now = timestamp_now();
                 {

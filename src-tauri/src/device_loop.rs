@@ -350,6 +350,15 @@ impl DeviceLoop {
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
             info!("USB handshake sequence sent (handshake + baudrate + no-timeout)");
+
+            // Wait for the STM32 bridge MCU to finish processing the USB
+            // handshake before sending standard subcommands. The controller
+            // takes ~3 seconds to ACK the handshake; if standard subcommands
+            // (set-report-mode, get-device-info, etc.) arrive during the
+            // handshake, they are silently ignored and the controller never
+            // starts streaming 0x30 standard reports.
+            tokio::time::sleep(Duration::from_millis(3000)).await;
+            info!("USB handshake settle period elapsed — sending standard subcommands");
         }
 
         // Send the set-input-report-mode subcommand (0x03 → 0x30) so the
@@ -457,6 +466,16 @@ impl DeviceLoop {
         let mut last_keepalive = Instant::now();
         let mut last_rumble_refresh = Instant::now();
         let mut last_profile_check = Instant::now();
+        // Watchdog: track when the last standard report (0x30) was received.
+        // If no reports arrive within 5 seconds of startup (or a reconnect),
+        // re-send the set-report-mode subcommand. This handles the case where
+        // the initial set-report-mode was sent before the controller finished
+        // processing the USB handshake and was silently ignored.
+        let dispatch_start = Instant::now();
+        let mut last_standard_report = None::<Instant>;
+        let mut report_mode_resends = 0u8;
+        const REPORT_MODE_RESEND_LIMIT: u8 = 3;
+        const REPORT_MODE_RESEND_DELAY: Duration = Duration::from_secs(5);
 
         loop {
             tokio::select! {
@@ -465,6 +484,10 @@ impl DeviceLoop {
                 Some(msg) = msg_rx.recv() => {
                     match msg {
                         DeviceMessage::Report(data) => {
+                            // Track standard report timing for the watchdog.
+                            if !data.is_empty() && (data[0] == REPORT_ID_STANDARD || data[0] == REPORT_ID_DEFAULT_BT) {
+                                last_standard_report = Some(Instant::now());
+                            }
                             self.handle_report(&data);
                         }
                         DeviceMessage::ReadError(reason) => {
@@ -476,6 +499,28 @@ impl DeviceLoop {
                 }
 
                 _ = tokio::time::sleep(Duration::from_millis(50)) => {
+                    // Watchdog: if no standard reports have been received within
+                    // the resend delay window, re-send set-report-mode. This
+                    // recovers from cases where the initial subcommand was lost
+                    // or ignored (e.g. sent during USB handshake processing).
+                    let watchdog_elapsed = last_standard_report
+                        .map(|t| t.elapsed())
+                        .unwrap_or_else(|| dispatch_start.elapsed());
+                    if watchdog_elapsed >= REPORT_MODE_RESEND_DELAY
+                        && report_mode_resends < REPORT_MODE_RESEND_LIMIT
+                    {
+                        report_mode_resends += 1;
+                        warn!(
+                            "No standard reports received in {:?} — re-sending set-report-mode (attempt {}/{})",
+                            watchdog_elapsed,
+                            report_mode_resends,
+                            REPORT_MODE_RESEND_LIMIT
+                        );
+                        let _ = cmd_tx.try_send(DeviceCommand::Write(build_set_report_mode_subcmd()));
+                        // Reset the watchdog timer so we don't immediately retry.
+                        last_standard_report = Some(Instant::now());
+                    }
+
                     // Rumble refresh: if the user has rumble enabled and the
                     // controller has acknowledged vibration enable (0x48),
                     // resend the rumble report to keep the LRA motors active.

@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod bthusb_monitor;
+mod bt_reconnect;
 mod cloud;
 mod config;
 mod crash;
@@ -736,6 +737,19 @@ fn get_player_lights(ctx: State<'_, AppCtx>) -> Result<state::PlayerLights, Stri
     Ok(ctx.shared.active_controller().player_lights.clone())
 }
 
+/// Manually trigger a Bluetooth reconnect for the paired Pro Controller.
+/// This re-enables the HID service via the Win32 Bluetooth API, causing
+/// Windows to initiate (or accept) a Bluetooth connection to the
+/// controller. Useful when the automatic reconnect on USB disconnect
+/// fails or when the user wants to switch from USB to Bluetooth manually.
+#[tauri::command]
+async fn trigger_bt_reconnect() -> Result<bool, String> {
+    let result = tokio::task::spawn_blocking(bt_reconnect::trigger_pro_controller_reconnect)
+        .await
+        .map_err(|e| format!("BT reconnect task panicked: {}", e))?;
+    Ok(result)
+}
+
 // ---------------------------------------------------------------------------
 // WebSocket IPC server (ws://127.0.0.1:9001)
 // ---------------------------------------------------------------------------
@@ -1361,6 +1375,7 @@ fn main() {
             set_report_mode,
             get_player_lights,
             get_home_light,
+            trigger_bt_reconnect,
             recalibrate_sticks,
             refresh_spi_diagnostics,
             reset_factory_calibration,

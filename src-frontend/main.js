@@ -3939,3 +3939,23 @@ if (invoke) {
     loadKbm();
   })();
 }
+
+// "Switch to BT" button — triggers a Bluetooth reconnect for the paired
+// Pro Controller. Useful for switching from USB to Bluetooth without
+// physically unplugging the cable.
+if (el("btn-bt-reconnect")) {
+  el("btn-bt-reconnect").addEventListener("click", async () => {
+    if (!invoke) return;
+    appendLog("[INFO] Triggering Bluetooth reconnect…", "hid-line");
+    try {
+      const ok = await invoke("trigger_bt_reconnect");
+      if (ok) {
+        appendLog("[OK] Bluetooth reconnect triggered — controller should reconnect over BT shortly", "hid-line");
+      } else {
+        appendLog("[WARN] Bluetooth reconnect failed — is the controller paired with Windows?", "warn-line");
+      }
+    } catch (err) {
+      appendLog("[ERR] trigger_bt_reconnect failed: " + err, "warn-line");
+    }
+  });
+}

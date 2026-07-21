@@ -7,6 +7,7 @@
 //! refactor `main.rs` to `use oxidelink::*` instead.
 
 pub mod bthusb_monitor;
+pub mod bt_reconnect;
 pub mod config;
 pub mod crash;
 pub mod curves;

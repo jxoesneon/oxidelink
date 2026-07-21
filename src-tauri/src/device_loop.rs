@@ -399,6 +399,60 @@ impl DeviceLoop {
         // instead of sending into a dead channel.
         self.shared.slot_cmd_txs.write()[slot_idx] = None;
         info!("Pro Controller disconnected (slot {})", self.slot);
+
+        // Switch-like behavior: when a USB controller disconnects, the
+        // STM32 bridge MCU reverts to Bluetooth mode after its default
+        // timeout (~5 seconds). Spawn a background task that waits for
+        // the revert, then proactively re-enables the HID service for
+        // the paired Pro Controller via the Win32 Bluetooth API. This
+        // triggers Windows to accept/initiate the Bluetooth connection,
+        // mirroring how the Nintendo Switch seamlessly transitions from
+        // USB to Bluetooth.
+        //
+        // For Bluetooth disconnects, the controller is already in BT
+        // mode, so we trigger the reconnect immediately (short delay).
+        let tx_clone = self.tx.clone();
+        let slot = self.slot;
+        let was_usb = conn_type == ConnectionType::Usb;
+        tokio::spawn(async move {
+            // USB: wait 6s for the STM32 to revert to Bluetooth.
+            // BT: wait 2s before retrying (the controller may still be
+            // in its disconnect window).
+            let delay = if was_usb {
+                Duration::from_secs(6)
+            } else {
+                Duration::from_secs(2)
+            };
+            tokio::time::sleep(delay).await;
+
+            info!(
+                "Triggering Bluetooth reconnect for slot {} (was_usb={})",
+                slot, was_usb
+            );
+            // Run the blocking Bluetooth API call on a spawn_blocking
+            // task so it doesn't stall the async executor.
+            let result =
+                tokio::task::spawn_blocking(crate::bt_reconnect::trigger_pro_controller_reconnect)
+                    .await;
+            match result {
+                Ok(true) => {
+                    info!("Bluetooth reconnect triggered successfully for slot {}", slot);
+                }
+                Ok(false) => {
+                    warn!(
+                        "Bluetooth reconnect trigger did not find/connect a paired Pro Controller (slot {})",
+                        slot
+                    );
+                    let _ = tx_clone.send(IpcEvent::LogMessage {
+                        level: "warn".into(),
+                        message: "USB disconnected but no paired Pro Controller found over Bluetooth. Pair the controller via Windows Bluetooth Settings first.".into(),
+                    });
+                }
+                Err(e) => {
+                    warn!("Bluetooth reconnect task panicked: {} (slot {})", e, slot);
+                }
+            }
+        });
     }
 
     /// Tries to open the Pro Controller.

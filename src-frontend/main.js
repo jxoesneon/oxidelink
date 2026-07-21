@@ -437,6 +437,14 @@ function updateWireframe(data) {
     updateStick("stick-right-cap", data.right_stick);
     updateStickCalDotFromState("right", data.right_stick);
   }
+
+  // Analog trigger bars (0.0–1.0)
+  const lt = Math.max(0, Math.min(1, data.left_trigger ?? 0));
+  const rt = Math.max(0, Math.min(1, data.right_trigger ?? 0));
+  const zlBar = el("trigger-zl-bar"); if (zlBar) zlBar.style.width = (lt * 100).toFixed(0) + "%";
+  const zrBar = el("trigger-zr-bar"); if (zrBar) zrBar.style.width = (rt * 100).toFixed(0) + "%";
+  setText("trigger-zl-val", Math.round(lt * 255));
+  setText("trigger-zr-val", Math.round(rt * 255));
 }
 
 // High-frequency event batching: buffer the latest ControllerState, ImuData,
@@ -3141,6 +3149,181 @@ function showCurveFields() {
   document.querySelectorAll("[data-curve='bezier']").forEach((node) => {
     node.style.display = (type === "bezier") ? "" : "none";
   });
+  drawCurveEditor();
+}
+
+function setCurveStatus(msg, kind) {
+  const s = el("curve-status");
+  if (!s) return;
+  s.textContent = msg || "";
+  s.className = "status-msg " + (kind || "info");
+}
+
+// Evaluate the currently-configured curve at input t (0..1) → output (0..1).
+function evalCurve(type, t, power, p1, p2) {
+  if (type === "linear") return t;
+  if (type === "exponential") return Math.pow(t, power);
+  if (type === "scurve") return t * t * (3 - 2 * t);
+  if (type === "bezier") {
+    const u = 1 - t;
+    return 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t;
+  }
+  return t;
+}
+
+function drawCurveEditor() {
+  const canvas = el("curve-editor-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  // Grid
+  ctx.strokeStyle = "rgba(120,200,255,0.12)";
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 10; i++) {
+    const p = (i / 10) * w;
+    ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, h); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, (i / 10) * h); ctx.lineTo(w, (i / 10) * h); ctx.stroke();
+  }
+
+  // Reference linear
+  ctx.strokeStyle = "rgba(138,150,168,0.25)";
+  ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(0, h); ctx.lineTo(w, 0); ctx.stroke();
+  ctx.setLineDash([]);
+
+  const type = el("curve-type")?.value || "linear";
+  const power = parseFloat(el("curve-power")?.value || "2");
+  const p1 = [parseFloat(el("curve-p1x")?.value || "0.3"), parseFloat(el("curve-p1y")?.value || "0.9")];
+  const p2 = [parseFloat(el("curve-p2x")?.value || "0.7"), parseFloat(el("curve-p2y")?.value || "0.1")];
+
+  // Curve
+  ctx.strokeStyle = "#78c8ff"; ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let px = 0; px <= w; px++) {
+    const t = px / w;
+    const out = evalCurve(type, t, power, p1, p2);
+    const py = h - out * h;
+    if (px === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+  ctx.shadowColor = "rgba(120,200,255,0.5)"; ctx.shadowBlur = 6; ctx.stroke(); ctx.shadowBlur = 0;
+
+  // Bezier control points + handles
+  if (type === "bezier") {
+    const pts = [[0, 0], p1, p2, [1, 1]];
+    ctx.strokeStyle = "rgba(255,200,120,0.4)"; ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, h); ctx.lineTo(p1[0] * w, h - p1[1] * h);
+    ctx.moveTo(w, 0); ctx.lineTo(p2[0] * w, h - p2[1] * h);
+    ctx.stroke();
+    pts.slice(1, 3).forEach((p) => {
+      const px = p[0] * w, py = h - p[1] * h;
+      ctx.fillStyle = "#ffc878";
+      ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "rgba(255,200,120,0.6)"; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(px, py, 8, 0, Math.PI * 2); ctx.stroke();
+    });
+  }
+
+  // Axis labels
+  ctx.fillStyle = "rgba(138,150,168,0.6)"; ctx.font = "10px Cascadia Code, monospace";
+  ctx.fillText("Input →", w - 50, h - 4);
+  ctx.save(); ctx.translate(10, 50); ctx.rotate(-Math.PI / 2); ctx.fillText("Output", 0, 0); ctx.restore();
+}
+
+// Interactive dragging of Bezier control points on the curve editor canvas.
+function setupCurveEditorDrag() {
+  const canvas = el("curve-editor-canvas");
+  if (!canvas) return;
+  let dragPt = null;
+  const hitRadius = 14;
+
+  function getPos(e) {
+    const r = canvas.getBoundingClientRect();
+    const sx = canvas.width / r.width, sy = canvas.height / r.height;
+    return { x: (e.clientX - r.left) * sx, y: (e.clientY - r.top) * sy };
+  }
+
+  function hitTest(pos) {
+    const type = el("curve-type")?.value;
+    if (type !== "bezier") return null;
+    const p1 = [parseFloat(el("curve-p1x")?.value || "0.3"), parseFloat(el("curve-p1y")?.value || "0.9")];
+    const p2 = [parseFloat(el("curve-p2x")?.value || "0.7"), parseFloat(el("curve-p2y")?.value || "0.1")];
+    const c1 = { x: p1[0] * canvas.width, y: canvas.height - p1[1] * canvas.height };
+    const c2 = { x: p2[0] * canvas.width, y: canvas.height - p2[1] * canvas.height };
+    if (Math.hypot(pos.x - c1.x, pos.y - c1.y) < hitRadius) return "p1";
+    if (Math.hypot(pos.x - c2.x, pos.y - c2.y) < hitRadius) return "p2";
+    return null;
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    dragPt = hitTest(getPos(e));
+    if (dragPt) { canvas.setPointerCapture(e.pointerId); e.preventDefault(); }
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!dragPt) { canvas.style.cursor = hitTest(getPos(e)) ? "grab" : "crosshair"; return; }
+    canvas.style.cursor = "grabbing";
+    const pos = getPos(e);
+    const x = Math.max(0, Math.min(1, pos.x / canvas.width));
+    const y = Math.max(0, Math.min(1, 1 - pos.y / canvas.height));
+    el("curve-" + dragPt + "x").value = x.toFixed(2);
+    el("curve-" + dragPt + "y").value = y.toFixed(2);
+    drawCurveEditor();
+  });
+  canvas.addEventListener("pointerup", (e) => {
+    if (dragPt) { dragPt = null; canvas.releasePointerCapture(e.pointerId); }
+  });
+}
+
+function drawZoneDiagram() {
+  const canvas = el("zone-diagram-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const cx = w / 2, cy = h / 2, R = Math.min(w, h) / 2 - 6;
+
+  const dz = Math.max(0, Math.min(1, parseFloat(el("zone-deadzone")?.value || "0")));
+  const lo = Math.max(0, Math.min(1, parseFloat(el("zone-low")?.value || "0.25")));
+  const md = Math.max(0, Math.min(1, parseFloat(el("zone-medium")?.value || "0.5")));
+  const hi = Math.max(0, Math.min(1, parseFloat(el("zone-high")?.value || "0.75")));
+
+  // Concentric zone rings
+  const rings = [
+    { r: hi, color: "rgba(120,200,255,0.10)", label: "High" },
+    { r: md, color: "rgba(120,200,255,0.14)", label: "Med" },
+    { r: lo, color: "rgba(120,200,255,0.18)", label: "Low" },
+    { r: dz, color: "rgba(255,120,120,0.22)", label: "Dead" },
+  ];
+  rings.forEach((ring) => {
+    ctx.fillStyle = ring.color;
+    ctx.beginPath(); ctx.arc(cx, cy, ring.r * R, 0, Math.PI * 2); ctx.fill();
+  });
+
+  // Ring borders
+  rings.forEach((ring) => {
+    ctx.strokeStyle = ring.r === dz ? "rgba(255,120,120,0.5)" : "rgba(120,200,255,0.3)";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cx, cy, ring.r * R, 0, Math.PI * 2); ctx.stroke();
+  });
+
+  // Outer boundary
+  ctx.strokeStyle = "rgba(120,200,255,0.4)"; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+
+  // Crosshair
+  ctx.strokeStyle = "rgba(138,150,168,0.2)"; ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R);
+  ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy); ctx.stroke();
+
+  // Labels
+  ctx.fillStyle = "rgba(138,150,168,0.7)"; ctx.font = "9px Cascadia Code, monospace";
+  ctx.fillText("DZ", cx + 3, cy - dz * R + 3);
+  ctx.fillText("Lo", cx + 3, cy - lo * R + 3);
+  ctx.fillText("Md", cx + 3, cy - md * R + 3);
+  ctx.fillText("Hi", cx + 3, cy - hi * R + 3);
 }
 
 async function loadCurve() {
@@ -3157,8 +3340,10 @@ async function loadCurve() {
       el("curve-p2y").value = curve.value.p2[1];
     }
     showCurveFields();
+    setCurveStatus("Curve loaded", "ok");
   } catch (e) {
     appendLog("[ERR] get_response_curve: " + e, "warn-line");
+    setCurveStatus("Load failed: " + e, "err");
   }
 }
 
@@ -3183,9 +3368,9 @@ async function applyCurve() {
   }
   try {
     await invoke("set_mapping_response_curve", { curve });
-    el("curve-status").textContent = "Curve applied";
+    setCurveStatus("Curve applied", "ok");
   } catch (e) {
-    el("curve-status").textContent = "Error: " + e;
+    setCurveStatus("Error: " + e, "err");
   }
 }
 
@@ -3197,6 +3382,7 @@ async function loadZones() {
     el("zone-low").value = zones.low;
     el("zone-medium").value = zones.medium;
     el("zone-high").value = zones.high;
+    drawZoneDiagram();
   } catch (e) {
     appendLog("[ERR] get_stick_zones: " + e, "warn-line");
   }
@@ -3215,17 +3401,40 @@ async function applyZones() {
   };
   try {
     await invoke("set_stick_zones", { zones });
+    drawZoneDiagram();
   } catch (e) {
     appendLog("[ERR] set_stick_zones: " + e, "warn-line");
   }
 }
 
 el("curve-type")?.addEventListener("change", showCurveFields);
+el("curve-power")?.addEventListener("input", drawCurveEditor);
+el("curve-p1x")?.addEventListener("input", drawCurveEditor);
+el("curve-p1y")?.addEventListener("input", drawCurveEditor);
+el("curve-p2x")?.addEventListener("input", drawCurveEditor);
+el("curve-p2y")?.addEventListener("input", drawCurveEditor);
 el("btn-curve-load")?.addEventListener("click", loadCurve);
 el("btn-curve-apply")?.addEventListener("click", applyCurve);
 el("btn-zone-load")?.addEventListener("click", loadZones);
 el("btn-zone-apply")?.addEventListener("click", applyZones);
+el("zone-deadzone")?.addEventListener("input", drawZoneDiagram);
+el("zone-low")?.addEventListener("input", drawZoneDiagram);
+el("zone-medium")?.addEventListener("input", drawZoneDiagram);
+el("zone-high")?.addEventListener("input", drawZoneDiagram);
+
+// Curve preset buttons
+document.querySelectorAll("[data-curve-preset]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const preset = btn.dataset.curvePreset;
+    el("curve-type").value = preset;
+    if (preset === "exponential" && btn.dataset.power) el("curve-power").value = btn.dataset.power;
+    showCurveFields();
+  });
+});
+
+setupCurveEditorDrag();
 showCurveFields();
+drawZoneDiagram();
 
 // =============================================================================
 // KB/M
@@ -3469,12 +3678,46 @@ el("tray-minimize")?.addEventListener("change", applyTraySettings);
 // =============================================================================
 function renderControllerList(slots) {
   const body = el("multi-controller-list");
-  if (!body) return;
-  body.innerHTML = "";
-  (slots || []).forEach((s, idx) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${idx}</td><td>${s.connected ? "Yes" : "No"}</td><td>${s.battery_percent ?? "—"}%</td><td>${escapeHtml(s.connection_type || "—")}</td><td>${escapeHtml(s.active_profile_name || "—")}</td>`;
-    body.appendChild(tr);
+  if (body) {
+    body.innerHTML = "";
+    (slots || []).forEach((s, idx) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${idx}</td><td>${s.connected ? "Yes" : "No"}</td><td>${s.battery_percent ?? "—"}%</td><td>${escapeHtml(s.connection_type || "—")}</td><td>${escapeHtml(s.active_profile_name || "—")}</td>`;
+      body.appendChild(tr);
+    });
+  }
+  renderControllerCards(slots);
+}
+
+function renderControllerCards(slots) {
+  const wrap = el("multi-controller-cards");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  if (!slots || slots.length === 0) {
+    wrap.innerHTML = '<div class="metric-label">No controllers detected. Click Rescan.</div>';
+    return;
+  }
+  const activeSlot = parseInt(el("multi-slot")?.value || "0", 10);
+  slots.forEach((s, idx) => {
+    const card = document.createElement("div");
+    card.className = "controller-card" + (idx === activeSlot ? " active" : "") + (s.connected ? "" : " disconnected");
+    const battPct = s.battery_percent ?? 0;
+    const battColor = battPct > 50 ? "#6ef0a8" : battPct > 20 ? "#f0c060" : "#ff7878";
+    card.innerHTML = `
+      <div class="card-header">
+        <span class="card-slot">SLOT ${idx}${idx === activeSlot ? " · ACTIVE" : ""}</span>
+        <span class="card-status-dot ${s.connected ? "connected" : ""}"></span>
+      </div>
+      <div class="card-battery-bar"><div class="card-battery-fill" style="width:${battPct}%;background:${battColor}"></div></div>
+      <div class="card-meta"><span>${s.connected ? "Connected" : "Empty"}</span><span>${battPct}%</span></div>
+      <div class="card-meta"><span>${escapeHtml(s.connection_type || "—")}</span><span>${escapeHtml(s.active_profile_name || "—")}</span></div>
+    `;
+    card.addEventListener("click", () => {
+      const sel = el("multi-slot");
+      if (sel) { sel.value = String(idx); setActiveControllerSlot(); }
+    });
+    card.style.cursor = "pointer";
+    wrap.appendChild(card);
   });
 }
 
@@ -3575,6 +3818,57 @@ el("btn-dsu-status")?.addEventListener("click", refreshDsuStatus);
 // =============================================================================
 // Flick Stick tab
 // =============================================================================
+function setFlickStatus(msg, kind) {
+  const s = el("flick-status");
+  if (!s) return;
+  s.textContent = msg || "";
+  s.className = "status-msg " + (kind || "info");
+}
+
+function drawFlickDiagram() {
+  const canvas = el("flick-diagram-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const cx = w / 2, cy = h / 2, R = Math.min(w, h) / 2 - 6;
+
+  const dz = Math.max(0, Math.min(1, parseFloat(el("flick-deadzone")?.value || "0.15")));
+  const ft = Math.max(0, Math.min(1, parseFloat(el("flick-threshold")?.value || "0.9")));
+
+  // Deadzone (red-tinted)
+  ctx.fillStyle = "rgba(255,120,120,0.18)";
+  ctx.beginPath(); ctx.arc(cx, cy, dz * R, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "rgba(255,120,120,0.5)"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx, cy, dz * R, 0, Math.PI * 2); ctx.stroke();
+
+  // Flick threshold ring (highlighted)
+  ctx.fillStyle = "rgba(120,200,255,0.08)";
+  ctx.beginPath(); ctx.arc(cx, cy, ft * R, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "rgba(120,200,255,0.6)"; ctx.lineWidth = 2;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath(); ctx.arc(cx, cy, ft * R, 0, Math.PI * 2); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Outer boundary
+  ctx.strokeStyle = "rgba(120,200,255,0.4)"; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+
+  // Crosshair
+  ctx.strokeStyle = "rgba(138,150,168,0.2)"; ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R);
+  ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy); ctx.stroke();
+
+  // Center dot
+  ctx.fillStyle = "#78c8ff";
+  ctx.beginPath(); ctx.arc(cx, cy, 3, 0, Math.PI * 2); ctx.fill();
+
+  // Labels
+  ctx.fillStyle = "rgba(138,150,168,0.7)"; ctx.font = "9px Cascadia Code, monospace";
+  ctx.fillText("Dead", cx + 4, cy - dz * R + 3);
+  ctx.fillText("Flick", cx + 4, cy - ft * R + 3);
+}
+
 async function loadFlick() {
   if (!invoke) return;
   try {
@@ -3585,8 +3879,11 @@ async function loadFlick() {
     el("flick-deadzone").value = cfg.stick_deadzone;
     el("flick-cooldown").value = cfg.flick_cooldown_ms;
     el("flick-smoothing").value = cfg.output_smoothing;
+    drawFlickDiagram();
+    setFlickStatus("Config loaded", "ok");
   } catch (e) {
     appendLog("[ERR] get_flick_stick_config: " + e, "warn-line");
+    setFlickStatus("Load failed: " + e, "err");
   }
 }
 
@@ -3602,8 +3899,11 @@ async function applyFlick() {
   };
   try {
     await invoke("set_flick_stick_config", { config: cfg });
+    drawFlickDiagram();
+    setFlickStatus("Config applied", "ok");
   } catch (e) {
     appendLog("[ERR] set_flick_stick_config: " + e, "warn-line");
+    setFlickStatus("Apply failed: " + e, "err");
   }
 }
 
@@ -3611,25 +3911,68 @@ async function resetFlickYaw() {
   if (!invoke) return;
   try {
     await invoke("reset_flick_stick_yaw", { slot: null });
+    setFlickStatus("Yaw reset", "ok");
   } catch (e) {
     appendLog("[ERR] reset_flick_stick_yaw: " + e, "warn-line");
+    setFlickStatus("Reset failed: " + e, "err");
   }
 }
 
 el("btn-flick-load")?.addEventListener("click", loadFlick);
 el("btn-flick-apply")?.addEventListener("click", applyFlick);
 el("btn-flick-reset-yaw")?.addEventListener("click", resetFlickYaw);
+["flick-threshold", "flick-deadzone"].forEach((id) => {
+  el(id)?.addEventListener("input", drawFlickDiagram);
+});
+drawFlickDiagram();
 
 // =============================================================================
 // NFC / amiibo tab
 // =============================================================================
+function setNfcStatus(msg, kind) {
+  const s = el("nfc-tab-status");
+  if (!s) return;
+  s.textContent = msg || "";
+  s.className = "status-msg " + (kind || "info");
+}
+
+function renderNfcAmiiboInfo(state) {
+  const info = el("nfc-amiibo-info");
+  if (!info) return;
+  info.innerHTML = "";
+  if (!state) return;
+  const rows = [];
+  if (state.enabled !== undefined) rows.push(["NFC enabled", state.enabled ? "Yes" : "No"]);
+  if (state.tag_present !== undefined) rows.push(["Tag present", state.tag_present ? "Yes" : "No"]);
+  if (state.scan_count !== undefined) rows.push(["Scan count", String(state.scan_count)]);
+  if (state.last_error) rows.push(["Last error", state.last_error]);
+  if (state.tag_data) {
+    const td = state.tag_data;
+    if (td.uid) rows.push(["UID", td.uid]);
+    if (td.tag_type) rows.push(["Tag type", td.tag_type]);
+    if (td.is_amiibo !== undefined) rows.push(["Is amiibo", td.is_amiibo ? "Yes" : "No"]);
+    if (td.data_size) rows.push(["Data size", td.data_size + " bytes"]);
+  }
+  if (state.amiibo_data && state.amiibo_data.length > 0) {
+    rows.push(["Amiibo loaded", state.amiibo_data.length + " bytes"]);
+  }
+  rows.forEach(([k, v]) => {
+    const row = document.createElement("div");
+    row.className = "metric";
+    row.innerHTML = `<span class="metric-label">${escapeHtml(k)}</span><span class="metric-value">${escapeHtml(String(v))}</span>`;
+    info.appendChild(row);
+  });
+}
+
 async function nfcGetState() {
   if (!invoke) return;
   try {
     const state = await invoke("get_nfc_state");
-    setText("nfc-tab-status", JSON.stringify(state));
+    renderNfcAmiiboInfo(state);
+    setNfcStatus(state?.enabled ? "NFC active" : "NFC idle", state?.enabled ? "ok" : "info");
   } catch (e) {
     appendLog("[ERR] get_nfc_state: " + e, "warn-line");
+    setNfcStatus("Failed: " + e, "err");
   }
 }
 
@@ -3637,33 +3980,39 @@ async function nfcSetEnabled(enabled) {
   if (!invoke) return;
   try {
     const state = await invoke("set_nfc_enabled", { enabled });
-    setText("nfc-tab-status", JSON.stringify(state));
+    renderNfcAmiiboInfo(state);
+    setNfcStatus(enabled ? "NFC enabled" : "NFC disabled", "ok");
   } catch (e) {
     appendLog("[ERR] set_nfc_enabled: " + e, "warn-line");
+    setNfcStatus("Failed: " + e, "err");
   }
 }
 
 async function loadAmiibo() {
   if (!invoke) return;
   const path = el("nfc-amiibo-path")?.value?.trim();
-  if (!path) return;
+  if (!path) { setNfcStatus("Enter a .bin path first", "err"); return; }
   try {
     const state = await invoke("load_amiibo_bin", { path });
-    setText("nfc-tab-status", JSON.stringify(state));
+    renderNfcAmiiboInfo(state);
+    setNfcStatus("Amiibo loaded from " + path.split(/[\\/]/).pop(), "ok");
   } catch (e) {
     appendLog("[ERR] load_amiibo_bin: " + e, "warn-line");
+    setNfcStatus("Load failed: " + e, "err");
   }
 }
 
 async function emulateAmiibo() {
   if (!invoke) return;
   const path = el("nfc-amiibo-path")?.value?.trim();
-  if (!path) return;
+  if (!path) { setNfcStatus("Enter a .bin path first", "err"); return; }
   try {
     const state = await invoke("emulate_amiibo_from_path", { path });
-    setText("nfc-tab-status", JSON.stringify(state));
+    renderNfcAmiiboInfo(state);
+    setNfcStatus("Emulating amiibo", "ok");
   } catch (e) {
     appendLog("[ERR] emulate_amiibo_from_path: " + e, "warn-line");
+    setNfcStatus("Emulation failed: " + e, "err");
   }
 }
 
@@ -3731,14 +4080,73 @@ el("btn-install-update")?.addEventListener("click", installUpdate);
 // =============================================================================
 // Telemetry / Privacy tab
 // =============================================================================
+
+// Static catalog of allowed telemetry events (matches backend allowlist).
+const ALLOWED_TELEMETRY_EVENTS = [
+  { name: "app_started", desc: "App launch (no PII)" },
+  { name: "app_closed", desc: "App shutdown" },
+  { name: "controller_connected", desc: "Controller paired (transport only)" },
+  { name: "controller_disconnected", desc: "Controller unpaired" },
+  { name: "profile_loaded", desc: "Profile name loaded" },
+  { name: "profile_saved", desc: "Profile name saved" },
+  { name: "calibration_started", desc: "Calibration session began" },
+  { name: "calibration_completed", desc: "Calibration session finished" },
+  { name: "error_boundary", desc: "Recoverable error (message only, no stack)" },
+  { name: "test_event", desc: "Manual test event" },
+];
+
+function setTelemetryStatus(msg, kind) {
+  const s = el("telemetry-status");
+  if (s) { s.textContent = msg || ""; s.className = "status-msg " + (kind || "info"); }
+}
+
+function setCrashStatus(msg, kind) {
+  const s = el("crash-status");
+  if (s) { s.textContent = msg || ""; s.className = "status-msg " + (kind || "info"); }
+}
+
+function renderAllowedEvents() {
+  const wrap = el("telemetry-allowed-events");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  ALLOWED_TELEMETRY_EVENTS.forEach((ev) => {
+    const item = document.createElement("div");
+    item.className = "ae-item";
+    item.innerHTML = `<span class="ae-name">${escapeHtml(ev.name)}</span><span class="ae-desc">${escapeHtml(ev.desc)}</span>`;
+    wrap.appendChild(item);
+  });
+}
+
+function renderPrivacySummary(telemetryOn, crashOn) {
+  const wrap = el("telemetry-privacy-summary");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  const items = [
+    ["Personal data", "Never collected"],
+    ["Controller input", "Never sent"],
+    ["Profile contents", "Never sent"],
+    ["IP address", telemetryOn ? "Sent to Aptabase" : "Not sent"],
+    ["Crash stack", crashOn ? "Sent to Sentry" : "Not sent"],
+    ["Storage", "Local config only"],
+  ];
+  items.forEach(([k, v]) => {
+    const item = document.createElement("div");
+    item.className = "ae-item";
+    item.innerHTML = `<span class="ae-name">${escapeHtml(k)}</span><span class="ae-desc">${escapeHtml(v)}</span>`;
+    wrap.appendChild(item);
+  });
+}
+
 async function loadTelemetry() {
   if (!invoke) return;
   try {
     const status = await invoke("get_telemetry_status");
-    setText("telemetry-status", `Enabled: ${status.enabled}, Backend: ${status.backend}`);
+    setTelemetryStatus(`Enabled: ${status.enabled} · Backend: ${status.backend}`, status.enabled ? "ok" : "info");
     el("telemetry-enabled").checked = status.enabled;
+    renderPrivacySummary(status.enabled, el("crash-enabled")?.checked);
   } catch (e) {
     appendLog("[ERR] get_telemetry_status: " + e, "warn-line");
+    setTelemetryStatus("Load failed: " + e, "err");
   }
 }
 
@@ -3748,9 +4156,11 @@ async function applyTelemetry() {
   const key = el("telemetry-key")?.value?.trim() || null;
   try {
     const status = await invoke("set_telemetry_enabled", { enabled, key });
-    setText("telemetry-status", `Enabled: ${status.enabled}, Backend: ${status.backend}`);
+    setTelemetryStatus(`Enabled: ${status.enabled} · Backend: ${status.backend}`, status.enabled ? "ok" : "info");
+    renderPrivacySummary(status.enabled, el("crash-enabled")?.checked);
   } catch (e) {
     appendLog("[ERR] set_telemetry_enabled: " + e, "warn-line");
+    setTelemetryStatus("Apply failed: " + e, "err");
   }
 }
 
@@ -3758,11 +4168,13 @@ async function loadCrashReporting() {
   if (!invoke) return;
   try {
     const status = await invoke("get_crash_reporting_status");
-    setText("crash-status", `Enabled: ${status.enabled}, Test: ${status.test_mode}`);
+    setCrashStatus(`Enabled: ${status.enabled} · Test: ${status.test_mode}`, status.enabled ? "ok" : "info");
     el("crash-enabled").checked = status.enabled;
     if (status.dsn) el("crash-dsn").value = status.dsn;
+    renderPrivacySummary(el("telemetry-enabled")?.checked, status.enabled);
   } catch (e) {
     appendLog("[ERR] get_crash_reporting_status: " + e, "warn-line");
+    setCrashStatus("Load failed: " + e, "err");
   }
 }
 
@@ -3772,9 +4184,11 @@ async function applyCrashReporting() {
   const dsn = el("crash-dsn")?.value?.trim() || null;
   try {
     const status = await invoke("set_crash_reporting", { enabled, dsn });
-    setText("crash-status", `Enabled: ${status.enabled}, Test: ${status.test_mode}`);
+    setCrashStatus(`Enabled: ${status.enabled} · Test: ${status.test_mode}`, status.enabled ? "ok" : "info");
+    renderPrivacySummary(el("telemetry-enabled")?.checked, status.enabled);
   } catch (e) {
     appendLog("[ERR] set_crash_reporting: " + e, "warn-line");
+    setCrashStatus("Apply failed: " + e, "err");
   }
 }
 
@@ -3792,6 +4206,8 @@ async function recordTelemetryEvent() {
 el("btn-telemetry-apply")?.addEventListener("click", applyTelemetry);
 el("btn-crash-apply")?.addEventListener("click", applyCrashReporting);
 el("btn-record-telemetry")?.addEventListener("click", recordTelemetryEvent);
+renderAllowedEvents();
+renderPrivacySummary(false, false);
 
 // =============================================================================
 // Overlay
@@ -3808,6 +4224,7 @@ async function loadOverlay() {
     el("overlay-show-battery").checked = cfg.show_battery ?? true;
     el("overlay-show-profile").checked = cfg.show_profile ?? true;
     el("overlay-show-fps").checked = cfg.show_fps ?? false;
+    drawOverlayPreview();
   } catch (e) {
     appendLog("[ERR] loadOverlay: " + e, "warn-line");
   }
@@ -3852,9 +4269,83 @@ async function toggleOverlay() {
   }
 }
 
+// Live preview of the overlay with current settings.
+function drawOverlayPreview() {
+  const canvas = el("overlay-preview-canvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  // Screen background (darkened game scene)
+  ctx.fillStyle = "#0a0e14";
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = "rgba(120,200,255,0.04)";
+  for (let i = 0; i < 6; i++) ctx.fillRect(0, (i * h) / 6, w, 1);
+
+  const opacity = Math.max(0, Math.min(1, parseFloat(el("overlay-opacity")?.value || "0.9")));
+  const scale = Math.max(0.25, Math.min(4, parseFloat(el("overlay-scale")?.value || "1")));
+  const position = el("overlay-position")?.value || "top-left";
+  const showBattery = el("overlay-show-battery")?.checked;
+  const showProfile = el("overlay-show-profile")?.checked;
+  const showFps = el("overlay-show-fps")?.checked;
+
+  // Overlay panel size (scales with the scale setting)
+  const panelW = 140 * scale, panelH = 60 * scale;
+  const pad = 12;
+  let px, py;
+  if (position === "top-left") { px = pad; py = pad; }
+  else if (position === "top-right") { px = w - panelW - pad; py = pad; }
+  else if (position === "bottom-left") { px = pad; py = h - panelH - pad; }
+  else if (position === "bottom-right") { px = w - panelW - pad; py = h - panelH - pad; }
+  else { px = (w - panelW) / 2; py = (h - panelH) / 2; } // center
+
+  ctx.globalAlpha = opacity;
+  ctx.fillStyle = "rgba(10,14,20,0.85)";
+  ctx.strokeStyle = "rgba(120,200,255,0.4)";
+  ctx.lineWidth = 1;
+  roundRect(ctx, px, py, panelW, panelH, 8);
+  ctx.fill(); ctx.stroke();
+
+  ctx.fillStyle = "#78c8ff";
+  ctx.font = `${10 * scale}px Cascadia Code, monospace`;
+  let lineY = py + 16 * scale;
+  const lineH = 16 * scale;
+  if (showProfile) { ctx.fillText("Profile: Default", px + 8, lineY); lineY += lineH; }
+  if (showBattery) {
+    ctx.fillText("Battery: 87%", px + 8, lineY);
+    // Mini battery bar
+    const bx = px + panelW - 40 * scale, by = lineY - 8 * scale;
+    ctx.fillStyle = "rgba(255,255,255,0.15)"; ctx.fillRect(bx, by, 30 * scale, 6 * scale);
+    ctx.fillStyle = "#6ef0a8"; ctx.fillRect(bx, by, 30 * scale * 0.87, 6 * scale);
+    ctx.fillStyle = "#78c8ff";
+    lineY += lineH;
+  }
+  if (showFps) { ctx.fillText("FPS: 60", px + 8, lineY); }
+  ctx.globalAlpha = 1;
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
 el("btn-overlay-load")?.addEventListener("click", loadOverlay);
 el("btn-overlay-save")?.addEventListener("click", saveOverlay);
 el("btn-overlay-toggle")?.addEventListener("click", toggleOverlay);
+// Live preview updates
+["overlay-enabled", "overlay-show-battery", "overlay-show-profile", "overlay-show-fps"].forEach((id) => {
+  el(id)?.addEventListener("change", drawOverlayPreview);
+});
+["overlay-opacity", "overlay-scale", "overlay-position"].forEach((id) => {
+  el(id)?.addEventListener("input", drawOverlayPreview);
+  el(id)?.addEventListener("change", drawOverlayPreview);
+});
 
 // =============================================================================
 // Cloud
@@ -3889,39 +4380,62 @@ async function saveCloud() {
   }
 }
 
+let cloudProfileCache = [];
+
+function renderCloudProfileCards(profiles, filter) {
+  const list = el("cloud-list");
+  if (!list) return;
+  list.innerHTML = "";
+  const f = (filter || "").toLowerCase().trim();
+  const filtered = f
+    ? profiles.filter((p) =>
+        (p.name || "").toLowerCase().includes(f) ||
+        (p.author || "").toLowerCase().includes(f) ||
+        (p.tags || []).some((t) => t.toLowerCase().includes(f))
+      )
+    : profiles;
+  if (!filtered || filtered.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "metric-label";
+    empty.textContent = profiles.length === 0 ? "No community profiles found." : "No matches for '" + filter + "'";
+    list.appendChild(empty);
+    return;
+  }
+  filtered.forEach((p) => {
+    const card = document.createElement("div");
+    card.className = "profile-card";
+    const stars = p.rating ? "★".repeat(Math.round(p.rating)) + "☆".repeat(5 - Math.round(p.rating)) : "☆☆☆☆☆";
+    const tagsHtml = (p.tags || []).slice(0, 5).map((t) =>
+      `<span class="pc-tag">${escapeHtml(t)}</span>`).join("");
+    card.innerHTML = `
+      <div class="pc-header">
+        <div>
+          <div class="pc-name">${escapeHtml(p.name)}</div>
+          <div class="pc-author">by ${escapeHtml(p.author)}</div>
+        </div>
+        <button class="btn" data-dl="${escapeHtml(p.id)}">Download</button>
+      </div>
+      ${p.description ? `<div class="metric-label">${escapeHtml(p.description)}</div>` : ""}
+      <div class="pc-tags">${tagsHtml}</div>
+      <div class="pc-footer">
+        <span class="pc-stars">${stars}</span>
+        <span class="pc-downloads">${p.downloads ?? 0} downloads</span>
+      </div>
+    `;
+    card.querySelector("[data-dl]")?.addEventListener("click", (e) => {
+      const id = e.target.getAttribute("data-dl");
+      downloadProfileById(id, p.name);
+    });
+    list.appendChild(card);
+  });
+}
+
 async function listCommunityProfiles() {
   if (!invoke) return;
   try {
     const profiles = await invoke("list_community_profiles", { tags: "" });
-    const list = el("cloud-list");
-    if (list) {
-      list.innerHTML = "";
-      if (!profiles || profiles.length === 0) {
-        const empty = document.createElement("div");
-        empty.className = "metric-label";
-        empty.textContent = "No community profiles found.";
-        list.appendChild(empty);
-      } else {
-        profiles.forEach((p) => {
-          const row = document.createElement("div");
-          row.className = "glass panel";
-          row.style.cssText = "padding:8px 12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap";
-          const info = document.createElement("span");
-          info.style.flex = "1";
-          info.innerHTML = `<strong>${escapeHtml(p.name)}</strong> by ${escapeHtml(p.author)}` +
-            (p.description ? ` — ${escapeHtml(p.description)}` : "") +
-            ` · ${p.downloads ?? 0} downloads` +
-            (p.rating ? ` · ★ ${p.rating.toFixed(1)}` : "");
-          const dlBtn = document.createElement("button");
-          dlBtn.className = "btn";
-          dlBtn.textContent = "Download";
-          dlBtn.addEventListener("click", () => downloadProfileById(p.id, p.name));
-          row.appendChild(info);
-          row.appendChild(dlBtn);
-          list.appendChild(row);
-        });
-      }
-    }
+    cloudProfileCache = profiles || [];
+    renderCloudProfileCards(cloudProfileCache, el("cloud-search")?.value || "");
     appendLog("[CLOUD] Listed " + (profiles?.length || 0) + " profiles", "hid-line");
   } catch (e) {
     handleError("listCommunityProfiles failed", e);
@@ -3970,6 +4484,9 @@ el("btn-cloud-save")?.addEventListener("click", saveCloud);
 el("btn-cloud-list")?.addEventListener("click", listCommunityProfiles);
 el("btn-cloud-upload")?.addEventListener("click", uploadActiveProfile);
 el("btn-cloud-download")?.addEventListener("click", downloadByCode);
+el("cloud-search")?.addEventListener("input", (e) => {
+  renderCloudProfileCards(cloudProfileCache, e.target.value);
+});
 
 // Tab-switch loaders
 function onTabActivated(tab) {

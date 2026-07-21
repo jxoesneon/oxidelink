@@ -221,6 +221,17 @@
               </g>
             </svg>
           </div>
+          <!-- Analog trigger bars -->
+          <div class="metric" style="margin-top:12px">
+            <span class="metric-label">ZL</span>
+            <div class="bar"><div class="bar-fill" id="trigger-zl-bar" style="width:0%"></div></div>
+            <span class="metric-value" id="trigger-zl-val">0</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">ZR</span>
+            <div class="bar"><div class="bar-fill" id="trigger-zr-bar" style="width:0%"></div></div>
+            <span class="metric-value" id="trigger-zr-val">0</span>
+          </div>
         </section>
 
       </main>
@@ -1387,6 +1398,16 @@
         <main class="grid">
           <section class="glass panel">
             <h2>Response Curve</h2>
+            <div class="curve-editor-wrap">
+              <canvas id="curve-editor-canvas" width="360" height="360" aria-label="Response curve editor"></canvas>
+            </div>
+            <div class="curve-presets">
+              <button class="btn" data-curve-preset="linear">Linear</button>
+              <button class="btn" data-curve-preset="exponential" data-power="2">Aggressive</button>
+              <button class="btn" data-curve-preset="exponential" data-power="3">Precision</button>
+              <button class="btn" data-curve-preset="scurve">Smooth</button>
+              <button class="btn" data-curve-preset="bezier">Bezier</button>
+            </div>
             <div class="metric">
               <span class="metric-label">Curve Type</span>
               <select id="curve-type">
@@ -1398,42 +1419,45 @@
             </div>
             <div class="metric" data-curve="exponential">
               <span class="metric-label">Power</span>
-              <input type="number" id="curve-power" value="2.0" step="0.1" />
+              <input type="number" id="curve-power" value="2.0" step="0.1" aria-label="Exponential power" />
             </div>
             <div class="metric" data-curve="bezier" style="display:none">
-              <span class="metric-label">P1</span>
-              <input type="number" id="curve-p1x" value="0.3" step="0.01" style="width:60px" />
-              <input type="number" id="curve-p1y" value="0.9" step="0.01" style="width:60px" />
+              <span class="metric-label">P1 (x, y)</span>
+              <input type="number" id="curve-p1x" value="0.3" step="0.01" aria-label="Bezier P1 x" />
+              <input type="number" id="curve-p1y" value="0.9" step="0.01" aria-label="Bezier P1 y" />
             </div>
             <div class="metric" data-curve="bezier" style="display:none">
-              <span class="metric-label">P2</span>
-              <input type="number" id="curve-p2x" value="0.7" step="0.01" style="width:60px" />
-              <input type="number" id="curve-p2y" value="0.1" step="0.01" style="width:60px" />
+              <span class="metric-label">P2 (x, y)</span>
+              <input type="number" id="curve-p2x" value="0.7" step="0.01" aria-label="Bezier P2 x" />
+              <input type="number" id="curve-p2y" value="0.1" step="0.01" aria-label="Bezier P2 y" />
             </div>
             <div class="macro-actions">
               <button class="btn" id="btn-curve-load">Load</button>
               <button class="btn" id="btn-curve-apply">Apply</button>
             </div>
-            <div class="metric" id="curve-status">—</div>
+            <div class="status-msg info" id="curve-status"></div>
           </section>
 
           <section class="glass panel">
             <h2>Stick Zones</h2>
+            <div class="zone-diagram-wrap">
+              <canvas id="zone-diagram-canvas" width="240" height="240" aria-label="Stick zone diagram"></canvas>
+            </div>
             <div class="metric">
               <span class="metric-label">Deadzone</span>
-              <input type="number" id="zone-deadzone" value="0.0" step="0.05" min="0" max="1" />
+              <input type="number" id="zone-deadzone" value="0.0" step="0.05" min="0" max="1" aria-label="Deadzone threshold" />
             </div>
             <div class="metric">
               <span class="metric-label">Low</span>
-              <input type="number" id="zone-low" value="0.25" step="0.05" min="0" max="1" />
+              <input type="number" id="zone-low" value="0.25" step="0.05" min="0" max="1" aria-label="Low zone threshold" />
             </div>
             <div class="metric">
               <span class="metric-label">Medium</span>
-              <input type="number" id="zone-medium" value="0.5" step="0.05" min="0" max="1" />
+              <input type="number" id="zone-medium" value="0.5" step="0.05" min="0" max="1" aria-label="Medium zone threshold" />
             </div>
             <div class="metric">
               <span class="metric-label">High</span>
-              <input type="number" id="zone-high" value="0.75" step="0.05" min="0" max="1" />
+              <input type="number" id="zone-high" value="0.75" step="0.05" min="0" max="1" aria-label="High zone threshold" />
             </div>
             <div class="macro-actions">
               <button class="btn" id="btn-zone-load">Load</button>
@@ -1611,7 +1635,7 @@
           <section class="glass panel panel-wide">
             <h2>Controllers</h2>
             <div class="macro-actions" style="margin-bottom:0.75rem">
-              <select id="multi-slot" style="min-width:80px">
+              <select id="multi-slot" style="min-width:80px" aria-label="Controller slot">
                 <option value="0">Slot 0</option>
                 <option value="1">Slot 1</option>
                 <option value="2">Slot 2</option>
@@ -1621,7 +1645,8 @@
               <button class="btn" id="btn-multi-active">Set Active</button>
               <button class="btn btn-secondary" id="btn-multi-rescan">Rescan</button>
             </div>
-            <div class="log-table-wrap">
+            <div class="controller-cards" id="multi-controller-cards"></div>
+            <div class="log-table-wrap" style="margin-top:12px">
               <table class="log-table">
                 <thead><tr><th>Slot</th><th>Connected</th><th>Battery</th><th>Transport</th><th>Profile</th></tr></thead>
                 <tbody id="multi-controller-list"></tbody>
@@ -1666,6 +1691,9 @@
         <main class="grid">
           <section class="glass panel">
             <h2>Flick Stick</h2>
+            <div class="flick-diagram-wrap">
+              <canvas id="flick-diagram-canvas" width="240" height="240" aria-label="Flick stick diagram"></canvas>
+            </div>
             <div class="metric toggle-row-left">
               <label class="toggle-switch">
                 <input type="checkbox" id="flick-enabled" />
@@ -1675,29 +1703,30 @@
             </div>
             <div class="metric">
               <span class="metric-label">Flick threshold</span>
-              <input type="number" id="flick-threshold" value="0.9" step="0.01" min="0" max="1" />
+              <input type="number" id="flick-threshold" value="0.9" step="0.01" min="0" max="1" aria-label="Flick threshold" />
             </div>
             <div class="metric">
               <span class="metric-label">Rotate rate (deg/s)</span>
-              <input type="number" id="flick-rotate-rate" value="360" />
+              <input type="number" id="flick-rotate-rate" value="360" aria-label="Rotate rate" />
             </div>
             <div class="metric">
               <span class="metric-label">Stick deadzone</span>
-              <input type="number" id="flick-deadzone" value="0.15" step="0.01" min="0" max="1" />
+              <input type="number" id="flick-deadzone" value="0.15" step="0.01" min="0" max="1" aria-label="Stick deadzone" />
             </div>
             <div class="metric">
               <span class="metric-label">Flick cooldown (ms)</span>
-              <input type="number" id="flick-cooldown" value="150" />
+              <input type="number" id="flick-cooldown" value="150" aria-label="Flick cooldown" />
             </div>
             <div class="metric">
               <span class="metric-label">Output smoothing</span>
-              <input type="number" id="flick-smoothing" value="0" step="0.01" min="0" max="1" />
+              <input type="number" id="flick-smoothing" value="0" step="0.01" min="0" max="1" aria-label="Output smoothing" />
             </div>
             <div class="macro-actions">
               <button class="btn" id="btn-flick-load">Load</button>
               <button class="btn" id="btn-flick-apply">Apply</button>
               <button class="btn btn-secondary" id="btn-flick-reset-yaw">Reset Yaw</button>
             </div>
+            <div class="status-msg info" id="flick-status"></div>
           </section>
         </main>
       </div><!-- /tab-flick -->
@@ -1716,14 +1745,15 @@
             </div>
             <div class="metric">
               <span class="metric-label">Amiibo .bin path</span>
-              <input type="text" id="nfc-amiibo-path" placeholder="C:\\amiibo.bin" />
+              <input type="text" id="nfc-amiibo-path" placeholder="C:\\amiibo.bin" aria-label="Amiibo bin file path" />
             </div>
             <div class="macro-actions">
               <button class="btn" id="btn-nfc-get-state">Get State</button>
               <button class="btn" id="btn-load-amiibo">Load Amiibo</button>
               <button class="btn" id="btn-emulate-amiibo">Emulate</button>
             </div>
-            <div class="metric" id="nfc-tab-status">—</div>
+            <div class="status-msg info" id="nfc-tab-status"></div>
+            <div id="nfc-amiibo-info" style="margin-top:8px;display:flex;flex-direction:column;gap:4px"></div>
           </section>
         </main>
       </div><!-- /tab-nfc -->
@@ -1762,10 +1792,12 @@
             </div>
             <div class="metric">
               <span class="metric-label">Telemetry key</span>
-              <input type="text" id="telemetry-key" placeholder="Aptabase app key (optional)" />
+              <input type="text" id="telemetry-key" placeholder="Aptabase app key (optional)" aria-label="Aptabase app key" />
             </div>
             <button class="btn" id="btn-telemetry-apply">Apply Telemetry</button>
-            <div class="metric" id="telemetry-status">—</div>
+            <div class="status-msg info" id="telemetry-status"></div>
+            <h3 style="margin-top:14px;font-size:12px;color:var(--text-dim);letter-spacing:1px">ALLOWED EVENTS</h3>
+            <div class="allowed-events" id="telemetry-allowed-events"></div>
           </section>
 
           <section class="glass panel">
@@ -1779,15 +1811,17 @@
             </div>
             <div class="metric">
               <span class="metric-label">Sentry DSN (or "test")</span>
-              <input type="text" id="crash-dsn" placeholder="https://... or test" />
+              <input type="text" id="crash-dsn" placeholder="https://... or test" aria-label="Sentry DSN" />
             </div>
             <button class="btn" id="btn-crash-apply">Apply Crash Reporting</button>
-            <div class="metric" id="crash-status">—</div>
+            <div class="status-msg info" id="crash-status"></div>
             <div class="metric">
               <span class="metric-label">Test event name</span>
-              <input type="text" id="telemetry-event-name" value="test_event" />
+              <input type="text" id="telemetry-event-name" value="test_event" aria-label="Test event name" />
             </div>
             <button class="btn btn-secondary" id="btn-record-telemetry">Record Test Event</button>
+            <h3 style="margin-top:14px;font-size:12px;color:var(--text-dim);letter-spacing:1px">PRIVACY SUMMARY</h3>
+            <div class="allowed-events" id="telemetry-privacy-summary"></div>
           </section>
         </main>
       </div><!-- /tab-telemetry -->
@@ -1797,6 +1831,9 @@
         <main class="grid">
           <section class="glass panel panel-wide">
             <h2>Overlay</h2>
+            <div class="overlay-preview-wrap">
+              <canvas id="overlay-preview-canvas" width="480" height="270" aria-label="Overlay live preview"></canvas>
+            </div>
             <div class="metric toggle-row-left">
               <label class="toggle-switch">
                 <input type="checkbox" id="overlay-enabled" />
@@ -1898,7 +1935,8 @@
               <input type="text" id="cloud-share-code" placeholder="Enter code" />
               <button class="btn" id="btn-cloud-download">Download</button>
             </div>
-            <div id="cloud-list" style="margin-top:0.5rem;display:flex;flex-direction:column;gap:0.25rem"></div>
+            <div id="cloud-list" style="margin-top:0.5rem;display:flex;flex-direction:column;gap:0.5rem"></div>
+            <input type="text" id="cloud-search" class="profile-search" placeholder="Search by name, author, or tag…" aria-label="Search community profiles" style="margin-top:0.5rem" />
           </section>
         </main>
       </div><!-- /tab-cloud -->

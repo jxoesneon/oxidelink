@@ -188,10 +188,46 @@ select {
 }
 select:focus { outline: none; border-color: var(--accent); }
 
+input[type="text"],
+input[type="number"],
+input[type="password"] {
+  background: rgba(0,0,0,0.4); color: var(--text);
+  border: 1px solid var(--glass-border); border-radius: 10px;
+  padding: 6px 10px; font-size: 13px;
+  font-family: inherit;
+  transition: border-color 0.4s var(--ease-mercury);
+  min-width: 0;
+}
+input[type="text"]:focus,
+input[type="number"]:focus,
+input[type="password"]:focus {
+  outline: none; border-color: var(--accent);
+}
+input[type="text"]:focus-visible,
+input[type="number"]:focus-visible,
+input[type="password"]:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+input[type="text"]::placeholder,
+input[type="password"]::placeholder {
+  color: var(--text-dim); opacity: 0.6;
+}
+
 input[type="range"] {
   flex: 1; accent-color: var(--accent);
   transition: opacity 0.4s var(--ease-mercury);
 }
+
+/* Color-coded status messages for inline operation feedback. */
+.status-msg {
+  font-size: 12px; padding: 6px 10px; border-radius: 8px;
+  margin-top: 6px; display: inline-block;
+  border: 1px solid transparent;
+}
+.status-msg.ok    { color: #6ef0a8; border-color: rgba(110,240,168,0.3); background: rgba(110,240,168,0.08); }
+.status-msg.err   { color: var(--warn); border-color: rgba(255,120,120,0.3); background: rgba(255,120,120,0.08); }
+.status-msg.info  { color: var(--accent); border-color: rgba(120,200,255,0.3); background: rgba(120,200,255,0.08); }
+.status-msg:empty { display: none; }
 
 .btn {
   padding: 8px 16px; border-radius: 12px;
@@ -1216,6 +1252,134 @@ input:checked + .toggle-slider:before {
   image-rendering: crisp-edges;
 }
 
+/* Curve editor canvas for Curves/Zones tab */
+.curve-editor-wrap {
+  display: flex; justify-content: center; padding: 12px;
+  background: rgba(0,0,0,0.35); border-radius: 14px;
+  border: 1px solid var(--glass-border);
+}
+#curve-editor-canvas {
+  width: 100%; max-width: 360px; height: 360px;
+  background: rgba(0,0,0,0.5); border-radius: 10px;
+  cursor: crosshair; touch-action: none;
+}
+.curve-presets {
+  display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px;
+}
+.curve-presets .btn { padding: 4px 10px; font-size: 11px; }
+
+/* Zone diagram for Curves/Zones tab */
+.zone-diagram-wrap {
+  display: flex; justify-content: center; padding: 12px;
+  background: rgba(0,0,0,0.35); border-radius: 14px;
+  border: 1px solid var(--glass-border);
+}
+#zone-diagram-canvas {
+  width: 100%; max-width: 240px; height: 240px;
+  background: rgba(0,0,0,0.5); border-radius: 10px;
+}
+
+/* Overlay live preview */
+.overlay-preview-wrap {
+  display: flex; justify-content: center; padding: 12px;
+  background: rgba(0,0,0,0.35); border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  margin-bottom: 10px;
+}
+#overlay-preview-canvas {
+  width: 100%; max-width: 480px; height: 270px;
+  background: rgba(0,0,0,0.6); border-radius: 10px;
+}
+
+/* Flick stick diagram */
+.flick-diagram-wrap {
+  display: flex; justify-content: center; padding: 12px;
+  background: rgba(0,0,0,0.35); border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  margin-bottom: 10px;
+}
+#flick-diagram-canvas {
+  width: 100%; max-width: 240px; height: 240px;
+  background: rgba(0,0,0,0.5); border-radius: 10px;
+}
+
+/* Multi-controller cards */
+.controller-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.controller-card {
+  padding: 14px; border-radius: 14px;
+  background: rgba(0,0,0,0.35); border: 1px solid var(--glass-border);
+  display: flex; flex-direction: column; gap: 8px;
+  transition: border-color 0.4s var(--ease-mercury);
+}
+.controller-card.active { border-color: var(--accent); box-shadow: 0 0 12px rgba(120,200,255,0.2); }
+.controller-card.disconnected { opacity: 0.5; }
+.controller-card .card-header {
+  display: flex; justify-content: space-between; align-items: center;
+}
+.controller-card .card-slot { font-size: 11px; color: var(--text-dim); letter-spacing: 1px; }
+.controller-card .card-status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-dim); transition: background 0.3s;
+}
+.controller-card .card-status-dot.connected { background: #6ef0a8; box-shadow: 0 0 6px rgba(110,240,168,0.6); }
+.controller-card .card-battery-bar {
+  height: 6px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden;
+}
+.controller-card .card-battery-fill {
+  height: 100%; background: #6ef0a8; transition: width 0.4s, background 0.4s;
+}
+.controller-card .card-meta {
+  font-size: 11px; color: var(--text-dim); display: flex; justify-content: space-between;
+}
+
+/* Cloud profile cards */
+.profile-card {
+  padding: 12px 14px; border-radius: 12px;
+  background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border);
+  display: flex; flex-direction: column; gap: 6px;
+  transition: border-color 0.4s var(--ease-mercury);
+}
+.profile-card:hover { border-color: rgba(120,200,255,0.4); }
+.profile-card .pc-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.profile-card .pc-name { font-size: 14px; color: var(--text); font-weight: 600; }
+.profile-card .pc-author { font-size: 11px; color: var(--text-dim); }
+.profile-card .pc-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+.profile-card .pc-tag {
+  font-size: 10px; padding: 2px 8px; border-radius: 999px;
+  background: rgba(120,200,255,0.1); color: var(--accent);
+  border: 1px solid rgba(120,200,255,0.2); cursor: pointer;
+}
+.profile-card .pc-tag:hover { background: rgba(120,200,255,0.2); }
+.profile-card .pc-footer {
+  display: flex; justify-content: space-between; align-items: center; margin-top: 4px;
+}
+.profile-card .pc-stars { color: #f0c060; font-size: 12px; letter-spacing: 1px; }
+.profile-card .pc-downloads { font-size: 11px; color: var(--text-dim); }
+.profile-search {
+  width: 100%; margin-bottom: 8px; padding: 6px 10px;
+  background: rgba(0,0,0,0.4); color: var(--text);
+  border: 1px solid var(--glass-border); border-radius: 10px;
+  font-size: 13px;
+}
+
+/* Telemetry allowed-events list */
+.allowed-events {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 12px; background: rgba(0,0,0,0.3); border-radius: 10px;
+  border: 1px solid var(--glass-border);
+}
+.allowed-events .ae-item {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 12px; padding: 4px 0;
+}
+.allowed-events .ae-name { color: var(--accent); font-family: "Cascadia Code", monospace; }
+.allowed-events .ae-desc { color: var(--text-dim); }
+
 /* Advanced calibration toggles */
 .cal-toggles-grid {
   display: grid;
@@ -1651,6 +1815,15 @@ input:checked + .toggle-slider:before {
 
 .settings-row.toggle-row-left .toggle-label,
 .settings-row.toggle-row-left .toggle-label-text {
+  flex: 1;
+}
+
+/* Mirror toggle-row-left behavior for .metric rows (used by many tabs). */
+.metric.toggle-row-left {
+  justify-content: flex-start;
+  gap: 16px;
+}
+.metric.toggle-row-left .toggle-label {
   flex: 1;
 }
 

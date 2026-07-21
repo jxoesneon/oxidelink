@@ -1441,23 +1441,27 @@
           <section class="glass panel">
             <h2>Stick Zones</h2>
             <div class="zone-diagram-wrap">
-              <canvas id="zone-diagram-canvas" width="240" height="240" aria-label="Stick zone diagram"></canvas>
+              <canvas id="zone-diagram-canvas" width="240" height="240" aria-label="Stick zone diagram (drag rings to edit)"></canvas>
             </div>
             <div class="metric">
               <span class="metric-label">Deadzone</span>
-              <input type="number" id="zone-deadzone" value="0.0" step="0.05" min="0" max="1" aria-label="Deadzone threshold" />
+              <input type="range" id="zone-deadzone" value="0.0" step="0.01" min="0" max="1" aria-label="Deadzone threshold" />
+              <span class="metric-value" id="zone-deadzone-val">0.00</span>
             </div>
             <div class="metric">
               <span class="metric-label">Low</span>
-              <input type="number" id="zone-low" value="0.25" step="0.05" min="0" max="1" aria-label="Low zone threshold" />
+              <input type="range" id="zone-low" value="0.25" step="0.01" min="0" max="1" aria-label="Low zone threshold" />
+              <span class="metric-value" id="zone-low-val">0.25</span>
             </div>
             <div class="metric">
               <span class="metric-label">Medium</span>
-              <input type="number" id="zone-medium" value="0.5" step="0.05" min="0" max="1" aria-label="Medium zone threshold" />
+              <input type="range" id="zone-medium" value="0.5" step="0.01" min="0" max="1" aria-label="Medium zone threshold" />
+              <span class="metric-value" id="zone-medium-val">0.50</span>
             </div>
             <div class="metric">
               <span class="metric-label">High</span>
-              <input type="number" id="zone-high" value="0.75" step="0.05" min="0" max="1" aria-label="High zone threshold" />
+              <input type="range" id="zone-high" value="0.75" step="0.01" min="0" max="1" aria-label="High zone threshold" />
+              <span class="metric-value" id="zone-high-val">0.75</span>
             </div>
             <div class="macro-actions">
               <button class="btn" id="btn-zone-load">Load</button>

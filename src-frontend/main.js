@@ -3277,6 +3277,44 @@ function setupCurveEditorDrag() {
   });
 }
 
+// Zone thresholds in ascending order: deadzone ≤ low ≤ medium ≤ high ≤ 1.
+const ZONE_FIELDS = ["zone-deadzone", "zone-low", "zone-medium", "zone-high"];
+
+function getZoneValues() {
+  return ZONE_FIELDS.map((id) => Math.max(0, Math.min(1, parseFloat(el(id)?.value || "0"))));
+}
+
+function setZoneValue(idx, val) {
+  const id = ZONE_FIELDS[idx];
+  const input = el(id);
+  if (!input) return;
+  input.value = val.toFixed(2);
+  const valEl = el(id + "-val");
+  if (valEl) valEl.textContent = val.toFixed(2);
+}
+
+function syncZoneLabels() {
+  ZONE_FIELDS.forEach((id) => {
+    const v = parseFloat(el(id)?.value || "0");
+    const valEl = el(id + "-val");
+    if (valEl) valEl.textContent = v.toFixed(2);
+  });
+}
+
+// Enforce ascending ordering: each threshold must be >= the previous and <= the next.
+function clampZoneOrder(idx, val) {
+  const vals = getZoneValues();
+  vals[idx] = val;
+  for (let i = 0; i < vals.length; i++) {
+    const lo = i === 0 ? 0 : vals[i - 1];
+    const hi = i === vals.length - 1 ? 1 : vals[i + 1];
+    if (vals[i] < lo) vals[i] = lo;
+    if (vals[i] > hi) vals[i] = hi;
+  }
+  vals.forEach((v, i) => setZoneValue(i, v));
+  return vals;
+}
+
 function drawZoneDiagram() {
   const canvas = el("zone-diagram-canvas");
   if (!canvas) return;
@@ -3285,28 +3323,35 @@ function drawZoneDiagram() {
   ctx.clearRect(0, 0, w, h);
   const cx = w / 2, cy = h / 2, R = Math.min(w, h) / 2 - 6;
 
-  const dz = Math.max(0, Math.min(1, parseFloat(el("zone-deadzone")?.value || "0")));
-  const lo = Math.max(0, Math.min(1, parseFloat(el("zone-low")?.value || "0.25")));
-  const md = Math.max(0, Math.min(1, parseFloat(el("zone-medium")?.value || "0.5")));
-  const hi = Math.max(0, Math.min(1, parseFloat(el("zone-high")?.value || "0.75")));
+  const [dz, lo, md, hi] = getZoneValues();
 
-  // Concentric zone rings
+  // Concentric zone rings (outer to inner)
   const rings = [
-    { r: hi, color: "rgba(120,200,255,0.10)", label: "High" },
-    { r: md, color: "rgba(120,200,255,0.14)", label: "Med" },
-    { r: lo, color: "rgba(120,200,255,0.18)", label: "Low" },
-    { r: dz, color: "rgba(255,120,120,0.22)", label: "Dead" },
+    { r: hi, color: "rgba(120,200,255,0.10)", label: "High", accent: false },
+    { r: md, color: "rgba(120,200,255,0.14)", label: "Med", accent: false },
+    { r: lo, color: "rgba(120,200,255,0.18)", label: "Low", accent: false },
+    { r: dz, color: "rgba(255,120,120,0.22)", label: "Dead", accent: true },
   ];
   rings.forEach((ring) => {
     ctx.fillStyle = ring.color;
-    ctx.beginPath(); ctx.arc(cx, cy, ring.r * R, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy, Math.max(0.5, ring.r * R), 0, Math.PI * 2); ctx.fill();
   });
 
-  // Ring borders
-  rings.forEach((ring) => {
-    ctx.strokeStyle = ring.r === dz ? "rgba(255,120,120,0.5)" : "rgba(120,200,255,0.3)";
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.arc(cx, cy, ring.r * R, 0, Math.PI * 2); ctx.stroke();
+  // Ring borders (with drag handles)
+  rings.forEach((ring, i) => {
+    const rad = Math.max(0.5, ring.r * R);
+    ctx.strokeStyle = ring.accent ? "rgba(255,120,120,0.6)" : "rgba(120,200,255,0.4)";
+    ctx.lineWidth = zoneDragIdx === i ? 2.5 : 1.2;
+    ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2); ctx.stroke();
+
+    // Drag handle (small square on the right of each ring)
+    const hx = cx + rad, hy = cy;
+    ctx.fillStyle = zoneDragIdx === i ? "#78c8ff" : (ring.accent ? "rgba(255,120,120,0.8)" : "rgba(120,200,255,0.7)");
+    ctx.beginPath();
+    ctx.rect(hx - 4, hy - 4, 8, 8);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.4)"; ctx.lineWidth = 0.5;
+    ctx.stroke();
   });
 
   // Outer boundary
@@ -3319,11 +3364,72 @@ function drawZoneDiagram() {
   ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy); ctx.stroke();
 
   // Labels
-  ctx.fillStyle = "rgba(138,150,168,0.7)"; ctx.font = "9px Cascadia Code, monospace";
-  ctx.fillText("DZ", cx + 3, cy - dz * R + 3);
-  ctx.fillText("Lo", cx + 3, cy - lo * R + 3);
-  ctx.fillText("Md", cx + 3, cy - md * R + 3);
-  ctx.fillText("Hi", cx + 3, cy - hi * R + 3);
+  ctx.fillStyle = "rgba(138,150,168,0.8)"; ctx.font = "9px Cascadia Code, monospace";
+  ctx.fillText("DZ", cx + 4, cy - dz * R + 3);
+  ctx.fillText("Lo", cx + 4, cy - lo * R + 3);
+  ctx.fillText("Md", cx + 4, cy - md * R + 3);
+  ctx.fillText("Hi", cx + 4, cy - hi * R + 3);
+}
+
+// Interactive dragging of zone rings on the diagram canvas.
+let zoneDragIdx = null;
+function setupZoneDiagramDrag() {
+  const canvas = el("zone-diagram-canvas");
+  if (!canvas) return;
+  const hitRadius = 10;
+
+  function getPos(e) {
+    const r = canvas.getBoundingClientRect();
+    const sx = canvas.width / r.width, sy = canvas.height / r.height;
+    return { x: (e.clientX - r.left) * sx, y: (e.clientY - r.top) * sy };
+  }
+
+  function hitTest(pos) {
+    const cx = canvas.width / 2, cy = canvas.height / 2;
+    const R = Math.min(canvas.width, canvas.height) / 2 - 6;
+    const vals = getZoneValues();
+    let best = null, bestDist = hitRadius;
+    vals.forEach((v, i) => {
+      const rad = v * R;
+      const hx = cx + rad, hy = cy;
+      const d = Math.hypot(pos.x - hx, pos.y - hy);
+      if (d < bestDist) { bestDist = d; best = i; }
+    });
+    return best;
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    zoneDragIdx = hitTest(getPos(e));
+    if (zoneDragIdx !== null) {
+      canvas.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      drawZoneDiagram();
+    }
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (zoneDragIdx === null) {
+      canvas.style.cursor = hitTest(getPos(e)) !== null ? "grab" : "default";
+      return;
+    }
+    canvas.style.cursor = "grabbing";
+    const pos = getPos(e);
+    const cx = canvas.width / 2;
+    const R = Math.min(canvas.width, canvas.height) / 2 - 6;
+    const dist = Math.max(0, Math.min(R, pos.x - cx));
+    const val = dist / R;
+    clampZoneOrder(zoneDragIdx, val);
+    drawZoneDiagram();
+  });
+  canvas.addEventListener("pointerup", (e) => {
+    if (zoneDragIdx !== null) {
+      zoneDragIdx = null;
+      canvas.releasePointerCapture(e.pointerId);
+      drawZoneDiagram();
+    }
+  });
+  canvas.addEventListener("pointercancel", () => {
+    if (zoneDragIdx !== null) { zoneDragIdx = null; drawZoneDiagram(); }
+  });
 }
 
 async function loadCurve() {
@@ -3382,6 +3488,7 @@ async function loadZones() {
     el("zone-low").value = zones.low;
     el("zone-medium").value = zones.medium;
     el("zone-high").value = zones.high;
+    syncZoneLabels();
     drawZoneDiagram();
   } catch (e) {
     appendLog("[ERR] get_stick_zones: " + e, "warn-line");
@@ -3390,11 +3497,9 @@ async function loadZones() {
 
 async function applyZones() {
   if (!invoke) return;
+  const [deadzone, low, medium, high] = getZoneValues();
   const zones = {
-    deadzone: parseFloat(el("zone-deadzone")?.value || "0"),
-    low: parseFloat(el("zone-low")?.value || "0.25"),
-    medium: parseFloat(el("zone-medium")?.value || "0.5"),
-    high: parseFloat(el("zone-high")?.value || "0.75"),
+    deadzone, low, medium, high,
     low_actions: [],
     medium_actions: [],
     high_actions: [],
@@ -3417,10 +3522,14 @@ el("btn-curve-load")?.addEventListener("click", loadCurve);
 el("btn-curve-apply")?.addEventListener("click", applyCurve);
 el("btn-zone-load")?.addEventListener("click", loadZones);
 el("btn-zone-apply")?.addEventListener("click", applyZones);
-el("zone-deadzone")?.addEventListener("input", drawZoneDiagram);
-el("zone-low")?.addEventListener("input", drawZoneDiagram);
-el("zone-medium")?.addEventListener("input", drawZoneDiagram);
-el("zone-high")?.addEventListener("input", drawZoneDiagram);
+// Sliders update diagram + live value labels, with ascending-order clamping.
+ZONE_FIELDS.forEach((id, idx) => {
+  el(id)?.addEventListener("input", () => {
+    const v = parseFloat(el(id)?.value || "0");
+    clampZoneOrder(idx, v);
+    drawZoneDiagram();
+  });
+});
 
 // Curve preset buttons
 document.querySelectorAll("[data-curve-preset]").forEach((btn) => {
@@ -3433,7 +3542,9 @@ document.querySelectorAll("[data-curve-preset]").forEach((btn) => {
 });
 
 setupCurveEditorDrag();
+setupZoneDiagramDrag();
 showCurveFields();
+syncZoneLabels();
 drawZoneDiagram();
 
 // =============================================================================

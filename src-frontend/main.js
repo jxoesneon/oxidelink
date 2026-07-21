@@ -163,6 +163,18 @@ function setConnection(state) {
     label.textContent = "Connecting…";
   }
   flash(chip);
+  updateBtSwitchButton();
+}
+
+// Show the "Switch to BT" button only when the controller is connected
+// over USB. Hidden when disconnected, connecting, or already on Bluetooth.
+function updateBtSwitchButton() {
+  const btn = el("btn-bt-reconnect");
+  if (!btn) return;
+  const chip = el("connection-chip");
+  const isConnected = chip && chip.classList.contains("connected");
+  const isUsb = currentTransport && currentTransport.toLowerCase().includes("usb");
+  btn.hidden = !(isConnected && isUsb);
 }
 
 function updateBattery(percent, charging) {
@@ -442,6 +454,20 @@ function _flushPendingHighFreq() {
     if (_pendingState) {
       const ev = _pendingState;
       _pendingState = null;
+      // Extract transport from the ControllerState event — this fires at
+      // ~72Hz so the transport label stays in sync without waiting for the
+      // slower DeviceInfo event.
+      const ct = ev.data.connection_type;
+      if (ct) {
+        const newTransport = (typeof ct === "string" ? ct : String(ct)).replace(/^.*::/, "");
+        const norm = newTransport.toLowerCase().includes("usb") ? "USB"
+                   : newTransport.toLowerCase().includes("blue") ? "Bluetooth"
+                   : newTransport;
+        if (norm !== currentTransport) {
+          currentTransport = norm;
+          updateBtSwitchButton();
+        }
+      }
       setConnection(ev.data.connected ? "connected" : "disconnected");
       updateBattery(ev.data.battery_percent, ev.data.charging);
       signalAvg.push(ev.data.signal_strength);
@@ -1650,6 +1676,8 @@ function updateDeviceInfo(info) {
   if (chip && chip.classList.contains("connected")) {
     el("conn-label").textContent = `Connected · ${currentTransport}`;
   }
+  // Show/hide the "Switch to BT" button based on transport.
+  updateBtSwitchButton();
 
   // Track connection type for NFC/Amiibo availability.
   // NFC/IR is a Broadcom MCU feature — not available over USB (STM32 bridge).

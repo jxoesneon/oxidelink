@@ -97,6 +97,34 @@ html, body {
 .status-chip.connected .dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
 .status-chip.disconnected .dot { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
 
+/* "Switch to BT" button — pill style matching the status chip.
+   Only shown when the controller is connected over USB. */
+.bt-switch-btn {
+  margin-left: auto;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid var(--glass-border);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.5s var(--ease-mercury);
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+}
+.bt-switch-btn:hover {
+  color: var(--accent);
+  border-color: rgba(120,200,255,0.3);
+  background: rgba(120,200,255,0.06);
+}
+.bt-switch-btn:active {
+  transform: scale(0.97);
+}
+.bt-switch-btn[hidden] { display: none; }
+
 .grid {
   flex: 1;
   display: grid;

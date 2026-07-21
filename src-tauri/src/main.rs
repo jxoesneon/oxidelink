@@ -1,4 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// OxideLink is a binary crate whose internal modules expose library-style
+// API surface (Switch protocol constants, parser/builder utilities, config
+// types for upcoming features, mock/test infrastructure, and not-yet-wired
+// tray/updater features). These are intentionally kept as dead code rather
+// than deleted, so suppress the warning crate-wide instead of littering
+// every item with #[allow(dead_code)].
+#![allow(dead_code)]
 
 mod bthusb_monitor;
 mod bt_reconnect;

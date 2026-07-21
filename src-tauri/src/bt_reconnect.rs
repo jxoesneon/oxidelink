@@ -24,7 +24,7 @@ use windows_sys::Win32::Devices::Bluetooth::{
     BLUETOOTH_DEVICE_SEARCH_PARAMS, BLUETOOTH_FIND_RADIO_PARAMS, HBLUETOOTH_DEVICE_FIND,
     HBLUETOOTH_RADIO_FIND,
 };
-use windows_sys::Win32::Foundation::{BOOL, FALSE, HANDLE, TRUE};
+use windows_sys::Win32::Foundation::{FALSE, HANDLE, TRUE};
 
 /// GUID for the Bluetooth HID service (Human Interface Device).
 /// {00001124-0000-1000-8000-00805F9B34FB}

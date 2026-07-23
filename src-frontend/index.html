@@ -16,47 +16,41 @@
             <span class="tagline">Pro Controller Driver</span>
           </div>
         </div>
-        <div class="status-chip" id="connection-chip">
+        <div class="status-chip" id="connection-chip" role="status" aria-live="polite">
           <span class="dot" id="conn-dot"></span>
-          <span id="conn-label">Connecting…</span>
+          <span id="conn-label" aria-live="polite">Connecting…</span>
         </div>
         <button id="btn-bt-reconnect" class="bt-switch-btn" title="Switch from USB to Bluetooth" hidden>
           Switch to BT
         </button>
       </header>
 
-      <nav class="tab-nav">
-        <button class="tab-btn active" data-tab="controller">Controller</button>
-        <button class="tab-btn" data-tab="macros">Macros</button>
-        <button class="tab-btn" data-tab="imu">IMU & Motion</button>
-        <button class="tab-btn" data-tab="lights">Lights</button>
-        <button class="tab-btn" data-tab="calibration">Calibration</button>
-        <button class="tab-btn" data-tab="diagnostics">Diagnostics</button>
-        <button class="tab-btn" data-tab="profiles">Profiles</button>
-        <button class="tab-btn" data-tab="settings">Settings</button>
+      <nav class="tab-nav" role="tablist" aria-label="Primary tabs">
+        <button class="tab-btn active" data-tab="controller" role="tab" id="tabbtn-controller" aria-selected="true" aria-controls="tab-controller" tabindex="0">Controller</button>
+        <button class="tab-btn" data-tab="macros" role="tab" id="tabbtn-macros" aria-selected="false" aria-controls="tab-macros" tabindex="0">Macros</button>
+        <button class="tab-btn" data-tab="imu" role="tab" id="tabbtn-imu" aria-selected="false" aria-controls="tab-imu" tabindex="0">IMU & Motion</button>
+        <button class="tab-btn" data-tab="lights" role="tab" id="tabbtn-lights" aria-selected="false" aria-controls="tab-lights" tabindex="0">Lights</button>
+        <button class="tab-btn" data-tab="calibration" role="tab" id="tabbtn-calibration" aria-selected="false" aria-controls="tab-calibration" tabindex="0">Calibration</button>
+        <button class="tab-btn" data-tab="diagnostics" role="tab" id="tabbtn-diagnostics" aria-selected="false" aria-controls="tab-diagnostics" tabindex="0">Diagnostics</button>
+        <button class="tab-btn" data-tab="profiles" role="tab" id="tabbtn-profiles" aria-selected="false" aria-controls="tab-profiles" tabindex="0">Profiles</button>
+        <button class="tab-btn" data-tab="settings" role="tab" id="tabbtn-settings" aria-selected="false" aria-controls="tab-settings" tabindex="0">Settings</button>
       </nav>
 
-      <nav class="tab-nav" style="flex-wrap:wrap;margin-top:4px">
-        <button class="tab-btn" data-tab="curves">Curves/Zones</button>
-        <button class="tab-btn" data-tab="kbm">KB/M</button>
-        <button class="tab-btn" data-tab="hidhide">HidHide</button>
-        <button class="tab-btn" data-tab="logging">Logging</button>
-        <button class="tab-btn" data-tab="tray">Tray/Startup</button>
-        <button class="tab-btn" data-tab="multi">Multi-Controller</button>
-        <button class="tab-btn" data-tab="dsu">DSU Server</button>
-        <button class="tab-btn" data-tab="flick">Flick Stick</button>
-        <button class="tab-btn" data-tab="nfc">NFC/amiibo</button>
-        <button class="tab-btn" data-tab="updater">Updater</button>
-        <button class="tab-btn" data-tab="telemetry">Telemetry/Privacy</button>
-        <button class="tab-btn" data-tab="overlay">Overlay</button>
-        <button class="tab-btn" data-tab="cloud">Cloud</button>
+      <nav class="tab-nav tab-nav-advanced" role="tablist" aria-label="Advanced tabs">
+        <button class="tab-btn" data-tab="curves" role="tab" id="tabbtn-curves" aria-selected="false" aria-controls="tab-curves" tabindex="0">Curves/Zones</button>
+        <button class="tab-btn" data-tab="logging" role="tab" id="tabbtn-logging" aria-selected="false" aria-controls="tab-logging" tabindex="0">Logging</button>
+        <button class="tab-btn" data-tab="multi" role="tab" id="tabbtn-multi" aria-selected="false" aria-controls="tab-multi" tabindex="0">Multi-Controller</button>
+        <button class="tab-btn" data-tab="flick" role="tab" id="tabbtn-flick" aria-selected="false" aria-controls="tab-flick" tabindex="0">Flick Stick</button>
+        <button class="tab-btn" data-tab="nfc" role="tab" id="tabbtn-nfc" aria-selected="false" aria-controls="tab-nfc" tabindex="0">NFC/amiibo</button>
+        <button class="tab-btn" data-tab="overlay" role="tab" id="tabbtn-overlay" aria-selected="false" aria-controls="tab-overlay" tabindex="0">Overlay</button>
+        <button class="tab-btn" data-tab="cloud" role="tab" id="tabbtn-cloud" aria-selected="false" aria-controls="tab-cloud" tabindex="0">Cloud</button>
       </nav>
 
-      <div class="tab-pane active" id="tab-controller">
+      <div class="tab-pane active" id="tab-controller" role="tabpanel" aria-labelledby="tabbtn-controller">
       <main class="grid">
         <!-- Battery / telemetry panel -->
         <section class="glass panel" id="panel-telemetry">
-          <h2>Telemetry</h2>
+          <h2>Telemetry<span class="help-tooltip" data-tooltip="Real-time controller metrics: battery level, signal strength, and connection quality. Low battery triggers a warning at the configured threshold.">?</span></h2>
           <div class="metric">
             <span class="metric-label">Battery</span>
             <div class="bar"><div class="bar-fill" id="battery-fill"></div></div>
@@ -74,7 +68,7 @@
 
         <!-- Keep-alive panel -->
         <section class="glass panel" id="panel-keepalive">
-          <h2>Keep-Alive</h2>
+          <h2>Keep-Alive<span class="help-tooltip" data-tooltip="Monitors Bluetooth power state and sends periodic keep-alive packets to prevent the controller from disconnecting during idle periods.">?</span></h2>
           <div class="metric">
             <span class="metric-label">Status</span>
             <span class="metric-value" id="ka-status">Idle</span>
@@ -92,7 +86,7 @@
 
         <!-- Button remap panel -->
         <section class="glass panel" id="panel-remap">
-          <h2>Button Remap</h2>
+          <h2>Button Remap<span class="help-tooltip" data-tooltip="Remaps physical controller buttons to different XInput buttons. Useful for accessibility or custom layouts. Changes apply to the virtual controller seen by games.">?</span></h2>
           <div class="remap-row"><label for="remap-a">A →</label><select id="remap-a"></select></div>
           <div class="remap-row"><label for="remap-b">B →</label><select id="remap-b"></select></div>
           <div class="remap-row"><label for="remap-x">X →</label><select id="remap-x"></select></div>
@@ -101,24 +95,24 @@
 
         <!-- Deadzone panel -->
         <section class="glass panel" id="panel-deadzone">
-          <h2>Deadzones</h2>
+          <h2>Deadzones<span class="help-tooltip" data-tooltip="Sets the inner deadzone for each analog stick. Input below this threshold is ignored, eliminating stick drift. Higher values reduce drift but decrease micro-movement sensitivity.">?</span></h2>
           <div class="metric">
             <span class="metric-label">Left Stick</span>
-            <input type="range" min="0" max="40" value="8" id="dz-left" />
+            <input type="range" min="0" max="40" value="8" id="dz-left" aria-valuenow="8" aria-valuemin="0" aria-valuemax="40" />
             <span class="metric-value" id="dz-left-val">0.08</span>
           </div>
           <div class="metric">
             <span class="metric-label">Right Stick</span>
-            <input type="range" min="0" max="40" value="8" id="dz-right" />
+            <input type="range" min="0" max="40" value="8" id="dz-right" aria-valuenow="8" aria-valuemin="0" aria-valuemax="40" />
             <span class="metric-value" id="dz-right-val">0.08</span>
           </div>
         </section>
 
         <!-- Controller wireframe panel -->
         <section class="glass panel panel-wide" id="panel-wireframe">
-          <h2>Controller</h2>
+          <h2>Controller<span class="help-tooltip" data-tooltip="Live wireframe showing real-time button presses and stick positions. Click buttons to remap them (future feature).">?</span></h2>
           <div class="wireframe-wrap">
-            <svg class="controller-svg" viewBox="18 -16 362 280" xmlns="http://www.w3.org/2000/svg">
+            <svg class="controller-svg" viewBox="18 -16 362 280" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nintendo Switch Pro Controller wireframe diagram">
               <!-- ZL / ZR triggers (rear, shown floating above the bumps) -->
               <rect class="trigger-btn" id="btn-zl" x="103" y="-12" width="36" height="7" rx="3.5" />
               <rect class="trigger-btn" id="btn-zr" x="259" y="-12" width="36" height="7" rx="3.5" />
@@ -222,7 +216,7 @@
             </svg>
           </div>
           <!-- Analog trigger bars -->
-          <div class="metric" style="margin-top:12px">
+          <div class="metric">
             <span class="metric-label">ZL</span>
             <div class="bar"><div class="bar-fill" id="trigger-zl-bar" style="width:0%"></div></div>
             <span class="metric-value" id="trigger-zl-val">0</span>
@@ -238,13 +232,13 @@
       </div><!-- /tab-controller -->
 
       <!-- IMU & Motion tab -->
-      <div class="tab-pane" id="tab-imu">
+      <div class="tab-pane" id="tab-imu" role="tabpanel" aria-labelledby="tabbtn-imu" tabindex="0">
         <main class="grid">
           <!-- Attitude indicator -->
           <section class="glass panel panel-wide" id="panel-attitude">
-            <h2>Attitude Indicator</h2>
+            <h2>Attitude Indicator<span class="help-tooltip" data-tooltip="Artificial horizon showing the controller's orientation in 3D space. Pitch = tilt up/down, Roll = tilt left/right, Yaw = rotation. Used by motion-compatible games via DSU.">?</span></h2>
             <div class="imu-horizon">
-              <svg class="horizon-svg" id="horizon-svg" viewBox="0 0 140 84" xmlns="http://www.w3.org/2000/svg">
+              <svg class="horizon-svg" id="horizon-svg" viewBox="0 0 140 84" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Attitude indicator showing pitch, roll, and yaw">
                 <defs>
                   <clipPath id="horizon-clip">
                     <circle cx="70" cy="42" r="38" />
@@ -305,21 +299,21 @@
 
           <!-- Accelerometer sparklines -->
           <section class="glass panel" id="panel-accel">
-            <h2>Accelerometer</h2>
+            <h2>Accelerometer<span class="help-tooltip" data-tooltip="Measures linear acceleration on X/Y/Z axes. Used for tilt controls and motion gestures. Values in g (9.8 m/s²).">?</span></h2>
             <div class="imu-graphs">
               <div class="graph-row">
                 <span class="graph-label">Accel X</span>
-                <canvas class="sparkline" id="spark-accel-x" width="200" height="40"></canvas>
+                <canvas class="sparkline" id="spark-accel-x" width="200" height="40" role="img" aria-label="Accelerometer X-axis data sparkline"></canvas>
                 <span class="graph-value" id="val-accel-x">0.000 g</span>
               </div>
               <div class="graph-row">
                 <span class="graph-label">Accel Y</span>
-                <canvas class="sparkline" id="spark-accel-y" width="200" height="40"></canvas>
+                <canvas class="sparkline" id="spark-accel-y" width="200" height="40" role="img" aria-label="Accelerometer Y-axis data sparkline"></canvas>
                 <span class="graph-value" id="val-accel-y">0.000 g</span>
               </div>
               <div class="graph-row">
                 <span class="graph-label">Accel Z</span>
-                <canvas class="sparkline" id="spark-accel-z" width="200" height="40"></canvas>
+                <canvas class="sparkline" id="spark-accel-z" width="200" height="40" role="img" aria-label="Accelerometer Z-axis data sparkline"></canvas>
                 <span class="graph-value" id="val-accel-z">0.000 g</span>
               </div>
             </div>
@@ -327,21 +321,21 @@
 
           <!-- Gyroscope sparklines -->
           <section class="glass panel" id="panel-gyro">
-            <h2>Gyroscope</h2>
+            <h2>Gyroscope<span class="help-tooltip" data-tooltip="Measures angular rotation velocity on X/Y/Z axes. Used for motion aiming and steering. Values in degrees per second.">?</span></h2>
             <div class="imu-graphs">
               <div class="graph-row">
                 <span class="graph-label">Gyro X</span>
-                <canvas class="sparkline" id="spark-gyro-x" width="200" height="40"></canvas>
+                <canvas class="sparkline" id="spark-gyro-x" width="200" height="40" role="img" aria-label="Gyroscope X-axis data sparkline"></canvas>
                 <span class="graph-value" id="val-gyro-x">0.0 °/s</span>
               </div>
               <div class="graph-row">
                 <span class="graph-label">Gyro Y</span>
-                <canvas class="sparkline" id="spark-gyro-y" width="200" height="40"></canvas>
+                <canvas class="sparkline" id="spark-gyro-y" width="200" height="40" role="img" aria-label="Gyroscope Y-axis data sparkline"></canvas>
                 <span class="graph-value" id="val-gyro-y">0.0 °/s</span>
               </div>
               <div class="graph-row">
                 <span class="graph-label">Gyro Z</span>
-                <canvas class="sparkline" id="spark-gyro-z" width="200" height="40"></canvas>
+                <canvas class="sparkline" id="spark-gyro-z" width="200" height="40" role="img" aria-label="Gyroscope Z-axis data sparkline"></canvas>
                 <span class="graph-value" id="val-gyro-z">0.0 °/s</span>
               </div>
             </div>
@@ -349,7 +343,7 @@
 
           <!-- IMU controls -->
           <section class="glass panel" id="panel-imu-controls">
-            <h2>IMU Controls</h2>
+            <h2>IMU Controls<span class="help-tooltip" data-tooltip="Adjusts gyroscope sensitivity and accelerometer/gyro measurement ranges. Higher sensitivity = more responsive motion but potential jitter. Apply to save changes.">?</span></h2>
             <div class="imu-controls">
               <div class="toggle-row">
                 <label class="toggle-switch">
@@ -367,7 +361,7 @@
               </div>
               <div class="metric">
                 <span class="metric-label">Sensitivity</span>
-                <input type="range" min="1" max="100" value="50" id="gyro-sensitivity" />
+                <input type="range" min="1" max="100" value="50" id="gyro-sensitivity" aria-valuenow="50" aria-valuemin="1" aria-valuemax="100" />
                 <span class="metric-value" id="gyro-sensitivity-val">0.50</span>
               </div>
               <div class="metric">
@@ -391,15 +385,41 @@
               <button class="btn" id="btn-apply-imu-sensitivity">Apply IMU Settings</button>
             </div>
           </section>
+
+          <!-- DSU Output (merged from DSU Server tab) -->
+          <div class="glass panel panel-wide" id="panel-dsu-output">
+            <h2 class="panel-title">DSU Output (Cemuhook)<span class="help-tooltip" data-tooltip="DSU server broadcasts motion data to emulators (Cemu, Dolphin, RPCS3) using the Cemuhook protocol. Set bind address to 0.0.0.0 for network access, 127.0.0.1 for local only. Default port is 26760.">?</span></h2>
+            <div class="metric">
+              <span class="metric-label">Status</span>
+              <span class="metric-value" id="dsu-status" aria-live="polite">—</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Bind address</span>
+              <input type="text" id="dsu-bind-address" value="127.0.0.1" />
+            </div>
+            <div class="metric">
+              <span class="metric-label">Port</span>
+              <input type="number" id="dsu-port" value="26760" />
+            </div>
+            <div class="metric">
+              <span class="metric-label">Update rate (Hz)</span>
+              <input type="number" id="dsu-rate" value="60" />
+            </div>
+            <div class="macro-actions">
+              <button class="btn" id="btn-dsu-start">Start</button>
+              <button class="btn btn-danger" id="btn-dsu-stop">Stop</button>
+              <button class="btn btn-secondary" id="btn-dsu-status">Refresh Status</button>
+            </div>
+          </div>
         </main>
       </div><!-- /tab-imu -->
 
       <!-- Lights tab -->
-      <div class="tab-pane" id="tab-lights">
+      <div class="tab-pane" id="tab-lights" role="tabpanel" aria-labelledby="tabbtn-lights" tabindex="0">
         <main class="grid">
           <!-- Player LEDs -->
           <section class="glass panel panel-wide" id="panel-player-leds">
-            <h2>Player LEDs</h2>
+            <h2>Player LEDs<span class="help-tooltip" data-tooltip="Controls the 4 player indicator LEDs on the controller. These show which player number the controller represents. Toggle individual LEDs or use presets for common patterns.">?</span></h2>
             <div class="led-display">
               <div class="led-indicator" id="led-1">
                 <div class="led-dot"></div>
@@ -446,7 +466,7 @@
 
           <!-- Home light -->
           <section class="glass panel panel-wide" id="panel-home-light">
-            <h2>Home Light</h2>
+            <h2>Home Light<span class="help-tooltip" data-tooltip="Controls the ring light around the Home button. Adjust brightness, select animation patterns (solid, breathing, chase, etc.), and test the effect.">?</span></h2>
             <div class="home-preview">
               <div class="home-ring" id="home-ring">
                 <div class="home-ring-glow" id="home-ring-glow"></div>
@@ -458,7 +478,7 @@
             </div>
             <div class="metric">
               <span class="metric-label">Brightness</span>
-              <input type="range" min="0" max="100" value="50" id="home-brightness" />
+              <input type="range" min="0" max="100" value="50" id="home-brightness" aria-valuenow="50" aria-valuemin="0" aria-valuemax="100" />
               <span class="metric-value" id="home-brightness-val">50%</span>
             </div>
             <div class="metric">
@@ -478,14 +498,20 @@
       </div><!-- /tab-lights -->
 
       <!-- Calibration tab -->
-      <div class="tab-pane" id="tab-calibration">
+      <div class="tab-pane" id="tab-calibration" role="tabpanel" aria-labelledby="tabbtn-calibration" tabindex="0">
+        <nav class="sub-tab-nav" aria-label="Calibration sections">
+          <button class="sub-tab-btn active" data-cal-subtab="stick" aria-selected="true">Stick Calibration</button>
+          <button class="sub-tab-btn" data-cal-subtab="response" aria-selected="false">Response & Advanced</button>
+          <button class="sub-tab-btn" data-cal-subtab="factory" aria-selected="false">Factory & IMU</button>
+        </nav>
+        <div class="cal-subtab-content" data-cal-subtab="stick" id="cal-subtab-stick">
         <main class="grid">
           <!-- Left stick calibration -->
           <section class="glass panel" id="panel-cal-left">
-            <h2>Left Stick</h2>
+            <h2>Left Stick<span class="help-tooltip" data-tooltip="Visualizes left stick position in real-time. The dot shows current position, the trail shows recent movement. Use this to verify calibration and detect drift.">?</span></h2>
             <div class="stick-cal-section">
               <div class="stick-visualizer">
-                <svg class="stick-svg" id="stick-left-svg" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+                <svg class="stick-svg" id="stick-left-svg" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Left stick calibration visualizer">
                   <circle class="stick-outer" cx="60" cy="60" r="54" />
                   <circle class="stick-deadzone" cx="60" cy="60" r="12" id="stick-left-deadzone" />
                   <polyline class="stick-trail" id="stick-left-trail" points="" />
@@ -507,10 +533,10 @@
 
           <!-- Right stick calibration -->
           <section class="glass panel" id="panel-cal-right">
-            <h2>Right Stick</h2>
+            <h2>Right Stick<span class="help-tooltip" data-tooltip="Visualizes right stick position in real-time. The dot shows current position, the trail shows recent movement. Use this to verify calibration and detect drift.">?</span></h2>
             <div class="stick-cal-section">
               <div class="stick-visualizer">
-                <svg class="stick-svg" id="stick-right-svg" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+                <svg class="stick-svg" id="stick-right-svg" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Right stick calibration visualizer">
                   <circle class="stick-outer" cx="60" cy="60" r="54" />
                   <circle class="stick-deadzone" cx="60" cy="60" r="12" id="stick-right-deadzone" />
                   <polyline class="stick-trail" id="stick-right-trail" points="" />
@@ -530,39 +556,63 @@
             </div>
           </section>
 
-          <!-- Factory calibration data -->
-          <section class="glass panel panel-wide" id="panel-factory-cal">
-            <h2>Factory Calibration Data</h2>
-            <div class="cal-meta-row">
-              <span class="cal-source-badge cal-source-default" id="cal-source-badge">Default</span>
-              <span class="cal-valid-yes" id="cal-valid-indicator">✓ Valid</span>
+          <!-- Advanced Calibration Toggles -->
+          <section class="glass panel panel-wide" id="panel-cal-toggles">
+            <h2>Advanced Calibration Options<span class="help-tooltip" data-tooltip="Toggles for advanced calibration features. Enable user calibration override, drift compensation, and response curve application per stick.">?</span></h2>
+            <div class="cal-toggles-grid">
+              <label class="cal-toggle">
+                <input type="checkbox" id="adaptive-deadzone-toggle" checked />
+                <span class="cal-toggle-track"><span class="cal-toggle-thumb"></span></span>
+                <span class="cal-toggle-label">Adaptive Deadzone</span>
+              </label>
+              <label class="cal-toggle">
+                <input type="checkbox" id="center-auto-cal-toggle" checked />
+                <span class="cal-toggle-track"><span class="cal-toggle-thumb"></span></span>
+                <span class="cal-toggle-label">Center Auto-Calibration</span>
+              </label>
+              <label class="cal-toggle">
+                <input type="checkbox" id="drift-detection-toggle" checked />
+                <span class="cal-toggle-track"><span class="cal-toggle-thumb"></span></span>
+                <span class="cal-toggle-label">Drift Detection</span>
+              </label>
+              <label class="cal-toggle">
+                <input type="checkbox" id="gate-calibration-toggle" />
+                <span class="cal-toggle-track"><span class="cal-toggle-thumb"></span></span>
+                <span class="cal-toggle-label">Gate Calibration <span class="cal-toggle-hint">(requires sweep calibration)</span></span>
+              </label>
             </div>
-            <div class="factory-data">
-              <div class="factory-grid">
-                <div class="factory-item"><span class="factory-label">L Max X</span><span class="factory-value" id="fac-left-max-x">—</span></div>
-                <div class="factory-item"><span class="factory-label">L Min X</span><span class="factory-value" id="fac-left-min-x">—</span></div>
-                <div class="factory-item"><span class="factory-label">L Center X</span><span class="factory-value" id="fac-left-center-x">—</span></div>
-                <div class="factory-item"><span class="factory-label">L Max Y</span><span class="factory-value" id="fac-left-max-y">—</span></div>
-                <div class="factory-item"><span class="factory-label">L Min Y</span><span class="factory-value" id="fac-left-min-y">—</span></div>
-                <div class="factory-item"><span class="factory-label">L Center Y</span><span class="factory-value" id="fac-left-center-y">—</span></div>
-                <div class="factory-item"><span class="factory-label">R Max X</span><span class="factory-value" id="fac-right-max-x">—</span></div>
-                <div class="factory-item"><span class="factory-label">R Min X</span><span class="factory-value" id="fac-right-min-x">—</span></div>
-                <div class="factory-item"><span class="factory-label">R Center X</span><span class="factory-value" id="fac-right-center-x">—</span></div>
-                <div class="factory-item"><span class="factory-label">R Max Y</span><span class="factory-value" id="fac-right-max-y">—</span></div>
-                <div class="factory-item"><span class="factory-label">R Min Y</span><span class="factory-value" id="fac-right-min-y">—</span></div>
-                <div class="factory-item"><span class="factory-label">R Center Y</span><span class="factory-value" id="fac-right-center-y">—</span></div>
+          </section>
+        </main>
+        </div>
+        <div class="cal-subtab-content" data-cal-subtab="response" id="cal-subtab-response" hidden>
+        <main class="grid">
+          <!-- Response Curve Selector -->
+          <section class="glass panel panel-wide" id="panel-response-curve">
+            <h2>Response Curve<span class="help-tooltip" data-tooltip="Adjusts how raw stick input maps to output. Linear = 1:1, Exponential = accelerated response, SCurve = smooth S-shape, Bezier = custom curve. Affects aiming feel in games.">?</span></h2>
+            <div class="response-curve-controls">
+              <div class="response-curve-row">
+                <label for="response-curve-type">Curve Type</label>
+                <select id="response-curve-type">
+                  <option value="linear">Linear</option>
+                  <option value="exponential" selected>Exponential</option>
+                  <option value="s-curve">S-Curve</option>
+                  <option value="bezier">Bézier</option>
+                </select>
+              </div>
+              <div class="response-curve-row">
+                <label for="response-curve-power">Power</label>
+                <input type="range" min="500" max="3000" value="1300" id="response-curve-power" aria-valuenow="1300" aria-valuemin="500" aria-valuemax="3000" />
+                <span class="metric-value mono" id="response-curve-power-val">1.300</span>
               </div>
             </div>
-            <div class="calibration-actions">
-              <button class="btn" id="btn-recalibrate">Recalibrate</button>
-              <button class="btn" id="btn-reset-factory">Reset to Factory</button>
-              <button class="btn btn-secondary" id="btn-clear-drift">Clear Drift</button>
+            <div class="response-curve-preview-wrap">
+              <canvas id="response-curve-preview" width="320" height="160" role="img" aria-label="Response curve graph showing input to output mapping"></canvas>
             </div>
           </section>
 
           <!-- Advanced Calibration Status Panel -->
           <section class="glass panel panel-wide" id="panel-cal-status">
-            <h2>Advanced Calibration Status</h2>
+            <h2>Advanced Calibration Status<span class="help-tooltip" data-tooltip="Shows drift compensation status and calibration source (Factory/User/Default). 'Drifting' indicates the stick may need recalibration.">?</span></h2>
             <div class="cal-status-grid">
               <div class="cal-status-row">
                 <span class="cal-status-label">Drift Status</span>
@@ -591,60 +641,9 @@
             </div>
           </section>
 
-          <!-- Response Curve Selector -->
-          <section class="glass panel panel-wide" id="panel-response-curve">
-            <h2>Response Curve</h2>
-            <div class="response-curve-controls">
-              <div class="response-curve-row">
-                <label for="response-curve-type">Curve Type</label>
-                <select id="response-curve-type">
-                  <option value="linear">Linear</option>
-                  <option value="exponential" selected>Exponential</option>
-                  <option value="s-curve">S-Curve</option>
-                  <option value="bezier">Bézier</option>
-                </select>
-              </div>
-              <div class="response-curve-row">
-                <label for="response-curve-power">Power</label>
-                <input type="range" min="500" max="3000" value="1300" id="response-curve-power" />
-                <span class="metric-value mono" id="response-curve-power-val">1.300</span>
-              </div>
-            </div>
-            <div class="response-curve-preview-wrap">
-              <canvas id="response-curve-preview" width="320" height="160"></canvas>
-            </div>
-          </section>
-
-          <!-- Advanced Calibration Toggles -->
-          <section class="glass panel panel-wide" id="panel-cal-toggles">
-            <h2>Advanced Calibration Options</h2>
-            <div class="cal-toggles-grid">
-              <label class="cal-toggle">
-                <input type="checkbox" id="adaptive-deadzone-toggle" checked />
-                <span class="cal-toggle-track"><span class="cal-toggle-thumb"></span></span>
-                <span class="cal-toggle-label">Adaptive Deadzone</span>
-              </label>
-              <label class="cal-toggle">
-                <input type="checkbox" id="center-auto-cal-toggle" checked />
-                <span class="cal-toggle-track"><span class="cal-toggle-thumb"></span></span>
-                <span class="cal-toggle-label">Center Auto-Calibration</span>
-              </label>
-              <label class="cal-toggle">
-                <input type="checkbox" id="drift-detection-toggle" checked />
-                <span class="cal-toggle-track"><span class="cal-toggle-thumb"></span></span>
-                <span class="cal-toggle-label">Drift Detection</span>
-              </label>
-              <label class="cal-toggle">
-                <input type="checkbox" id="gate-calibration-toggle" />
-                <span class="cal-toggle-track"><span class="cal-toggle-thumb"></span></span>
-                <span class="cal-toggle-label">Gate Calibration <span class="cal-toggle-hint">(requires sweep calibration)</span></span>
-              </label>
-            </div>
-          </section>
-
           <!-- Gate Calibration -->
           <section class="glass panel panel-wide" id="panel-gate-cal">
-            <h2>Gate Calibration</h2>
+            <h2>Gate Calibration<span class="help-tooltip" data-tooltip="Calibrates the outer gate of the analog stick. Sweep the stick in a full circle to map the maximum deflection. Improves edge accuracy for circular gates.">?</span></h2>
             <p class="cal-gate-hint">Sweep the stick around the edge of its range for 3 seconds to map the gate boundary.</p>
             <div class="cal-gate-actions">
               <button class="btn" id="btn-calibrate-gate">Calibrate Gate</button>
@@ -654,10 +653,43 @@
               <span class="gate-cal-progress-text">Calibrating… sweep stick around edge</span>
             </div>
           </section>
+        </main>
+        </div>
+        <div class="cal-subtab-content" data-cal-subtab="factory" id="cal-subtab-factory" hidden>
+        <main class="grid">
+          <!-- Factory calibration data -->
+          <section class="glass panel panel-wide" id="panel-factory-cal">
+            <h2>Factory Calibration Data<span class="help-tooltip" data-tooltip="Read-only calibration values burned into the controller at the factory. These are the reference values used when user calibration is not applied.">?</span></h2>
+            <div class="cal-meta-row">
+              <span class="cal-source-badge cal-source-default" id="cal-source-badge">Default</span>
+              <span class="cal-valid-yes" id="cal-valid-indicator">✓ Valid</span>
+            </div>
+            <div class="factory-data">
+              <div class="factory-grid">
+                <div class="factory-item"><span class="factory-label">L Max X</span><span class="factory-value" id="fac-left-max-x">—</span></div>
+                <div class="factory-item"><span class="factory-label">L Min X</span><span class="factory-value" id="fac-left-min-x">—</span></div>
+                <div class="factory-item"><span class="factory-label">L Center X</span><span class="factory-value" id="fac-left-center-x">—</span></div>
+                <div class="factory-item"><span class="factory-label">L Max Y</span><span class="factory-value" id="fac-left-max-y">—</span></div>
+                <div class="factory-item"><span class="factory-label">L Min Y</span><span class="factory-value" id="fac-left-min-y">—</span></div>
+                <div class="factory-item"><span class="factory-label">L Center Y</span><span class="factory-value" id="fac-left-center-y">—</span></div>
+                <div class="factory-item"><span class="factory-label">R Max X</span><span class="factory-value" id="fac-right-max-x">—</span></div>
+                <div class="factory-item"><span class="factory-label">R Min X</span><span class="factory-value" id="fac-right-min-x">—</span></div>
+                <div class="factory-item"><span class="factory-label">R Center X</span><span class="factory-value" id="fac-right-center-x">—</span></div>
+                <div class="factory-item"><span class="factory-label">R Max Y</span><span class="factory-value" id="fac-right-max-y">—</span></div>
+                <div class="factory-item"><span class="factory-label">R Min Y</span><span class="factory-value" id="fac-right-min-y">—</span></div>
+                <div class="factory-item"><span class="factory-label">R Center Y</span><span class="factory-value" id="fac-right-center-y">—</span></div>
+              </div>
+            </div>
+            <div class="calibration-actions">
+              <button class="btn" id="btn-recalibrate">Recalibrate</button>
+              <button class="btn btn-danger" id="btn-reset-factory">Reset to Factory</button>
+              <button class="btn btn-danger" id="btn-clear-drift">Clear Drift</button>
+            </div>
+          </section>
 
           <!-- IMU Calibration Display -->
           <section class="glass panel panel-wide" id="panel-imu-cal">
-            <h2>IMU Calibration</h2>
+            <h2>IMU Calibration<span class="help-tooltip" data-tooltip="Shows IMU bias offsets. These compensate for sensor drift in the gyroscope and accelerometer. Values should be near zero; large values indicate sensor drift.">?</span></h2>
             <div class="cal-meta-row">
               <span class="cal-source-badge cal-source-default" id="imu-cal-source-badge">Default</span>
             </div>
@@ -689,52 +721,33 @@
             </div>
           </section>
         </main>
+        </div>
       </div><!-- /tab-calibration -->
 
       <!-- Diagnostics tab -->
-      <div class="tab-pane" id="tab-diagnostics">
+      <div class="tab-pane" id="tab-diagnostics" role="tabpanel" aria-labelledby="tabbtn-diagnostics" tabindex="0">
+        <nav class="sub-tab-nav" aria-label="Diagnostics sections">
+          <button class="sub-tab-btn active" data-diag-subtab="connection" aria-selected="true">Connection</button>
+          <button class="sub-tab-btn" data-diag-subtab="hardware" aria-selected="false">Hardware</button>
+          <button class="sub-tab-btn" data-diag-subtab="testing" aria-selected="false">Testing</button>
+          <button class="sub-tab-btn" data-diag-subtab="logs" aria-selected="false">Logs</button>
+        </nav>
+        <div class="diag-subtab-content" data-diag-subtab="connection" id="diag-subtab-connection">
         <main class="grid">
-          <!-- Device info -->
-          <section class="glass panel" id="panel-device-info">
-            <h2>Device Info</h2>
-            <div class="device-grid">
-              <div class="device-item"><span class="device-label">Controller Type</span><span class="device-value" id="dev-type">—</span></div>
-              <div class="device-item"><span class="device-label">Firmware</span><span class="device-value" id="dev-firmware">—</span></div>
-              <div class="device-item"><span class="device-label">MAC Address</span><span class="device-value mono" id="dev-mac">—</span></div>
-              <div class="device-item"><span class="device-label">Connection</span><span class="device-value" id="dev-connection">—</span></div>
+          <!-- Connection health score gauge -->
+          <div class="glass panel panel-wide" id="panel-health-score">
+            <h2 class="panel-title">Connection Health<span class="help-tooltip" data-tooltip="Overall connection quality score (0-100). Calculated from latency, packet loss, and report rate. Green = excellent, Yellow = acceptable, Red = poor.">?</span></h2>
+            <div class="health-gauge" id="connection-health-gauge" role="meter" aria-label="Connection health score" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+              <svg width="80" height="80" viewBox="0 0 80 80">
+                <circle class="gauge-bg" cx="40" cy="40" r="34" />
+                <circle class="gauge-fill" cx="40" cy="40" r="34" stroke-dasharray="213.6" stroke-dashoffset="213.6" id="gauge-fill-circle" />
+              </svg>
+              <span class="gauge-text" id="gauge-text">—</span>
             </div>
-          </section>
-
-          <!-- SPI flash info -->
-          <section class="glass panel" id="panel-spi-flash">
-            <h2>SPI Flash</h2>
-            <div class="device-grid">
-              <div class="device-item"><span class="device-label">Calibration</span><span class="device-value" id="spi-cal-status">—</span></div>
-              <div class="device-item"><span class="device-label">Serial</span><span class="device-value mono" id="spi-serial">—</span></div>
-              <div class="device-item">
-                <span class="device-label">Body Color</span>
-                <div class="color-swatch" id="spi-body-color"></div>
-              </div>
-              <div class="device-item">
-                <span class="device-label">Grip Color</span>
-                <div class="color-swatch" id="spi-grip-color"></div>
-              </div>
-              <div class="device-item">
-                <span class="device-label">Button Color</span>
-                <span class="device-value" id="spi-button-color">Not Stored</span>
-                <div class="color-swatch" id="spi-button-color-swatch" style="display:none"></div>
-              </div>
-              <div class="device-item">
-                <span class="device-label">SPI Colors</span>
-                <span class="device-value" id="spi-colors-active">Unknown</span>
-              </div>
-            </div>
-            <button class="btn btn-secondary" id="btn-refresh-spi" style="margin-top: 10px; width: 100%;">Re-read SPI Flash</button>
-          </section>
-
+          </div>
           <!-- Connection quality -->
           <section class="glass panel panel-wide" id="panel-connection-quality">
-            <h2>Connection Quality</h2>
+            <h2>Connection Quality<span class="help-tooltip" data-tooltip="Real-time connection metrics: latency (ms), packet loss (%), report rate (Hz). High latency or packet loss indicates interference or range issues.">?</span></h2>
             <div class="connection-metrics">
               <div class="metric-large">
                 <span class="metric-label">Latency</span>
@@ -773,15 +786,86 @@
 
           <!-- Signal history -->
           <section class="glass panel panel-wide" id="panel-signal-history">
-            <h2>Signal History (30s)</h2>
+            <h2>Signal History (30s)<span class="help-tooltip" data-tooltip="Graph showing signal quality over time. Sudden drops indicate interference or disconnection events. Use to diagnose intermittent connection issues.">?</span></h2>
             <div class="signal-history">
-              <canvas id="signal-history-canvas" width="800" height="80"></canvas>
+              <canvas id="signal-history-canvas" width="800" height="80" role="img" aria-label="Signal quality history graph"></canvas>
+            </div>
+          </section>
+        </main>
+        </div>
+        <div class="diag-subtab-content" data-diag-subtab="hardware" id="diag-subtab-hardware" hidden>
+        <main class="grid">
+          <!-- Device info -->
+          <section class="glass panel" id="panel-device-info">
+            <h2>Device Info<span class="help-tooltip" data-tooltip="Controller identification: MAC address, firmware version, serial number. Use this when reporting bugs or checking firmware compatibility.">?</span></h2>
+            <div class="device-grid">
+              <div class="device-item"><span class="device-label">Controller Type</span><span class="device-value" id="dev-type">—</span></div>
+              <div class="device-item"><span class="device-label">Firmware</span><span class="device-value" id="dev-firmware">—</span></div>
+              <div class="device-item"><span class="device-label">MAC Address</span><span class="device-value mono" id="dev-mac">—</span></div>
+              <div class="device-item"><span class="device-label">Connection</span><span class="device-value" id="dev-connection">—</span></div>
             </div>
           </section>
 
+          <!-- SPI flash info -->
+          <section class="glass panel" id="panel-spi-flash">
+            <h2>SPI Flash<span class="help-tooltip" data-tooltip="Raw SPI flash memory contents including factory calibration and color data. Advanced diagnostic data — do not modify unless instructed.">?</span></h2>
+            <div class="device-grid">
+              <div class="device-item"><span class="device-label">Calibration</span><span class="device-value" id="spi-cal-status">—</span></div>
+              <div class="device-item"><span class="device-label">Serial</span><span class="device-value mono" id="spi-serial">—</span></div>
+              <div class="device-item">
+                <span class="device-label">Body Color</span>
+                <div class="color-swatch" id="spi-body-color"></div>
+              </div>
+              <div class="device-item">
+                <span class="device-label">Grip Color</span>
+                <div class="color-swatch" id="spi-grip-color"></div>
+              </div>
+              <div class="device-item">
+                <span class="device-label">Button Color</span>
+                <span class="device-value" id="spi-button-color">Not Stored</span>
+                <div class="color-swatch" id="spi-button-color-swatch" style="display:none"></div>
+              </div>
+              <div class="device-item">
+                <span class="device-label">SPI Colors</span>
+                <span class="device-value" id="spi-colors-active">Unknown</span>
+              </div>
+            </div>
+            <button class="btn btn-secondary btn-full-width" id="btn-refresh-spi">Re-read SPI Flash</button>
+          </section>
+
+          <!-- Enhanced battery -->
+          <section class="glass panel" id="panel-battery-enhanced">
+            <h2>Battery<span class="help-tooltip" data-tooltip="Battery level, charging status, and low-battery threshold. The warning triggers when battery drops below the threshold. Charging status shows if USB is connected.">?</span></h2>
+            <div class="battery-main">
+              <div class="battery-icon">
+                <div class="battery-body">
+                  <div class="battery-level" id="battery-level-enhanced"></div>
+                </div>
+                <div class="battery-tip"></div>
+              </div>
+              <div class="battery-info">
+                <span class="battery-pct" id="battery-pct-enhanced">—</span>
+                <span class="battery-status" id="battery-status-enhanced">—</span>
+              </div>
+            </div>
+            <div class="power-metrics">
+              <div class="device-item"><span class="device-label">Power Source</span><span class="device-value" id="battery-power-source">—</span></div>
+              <div class="device-item"><span class="device-label">Health</span><span class="device-value" id="battery-health">—</span></div>
+              <div class="device-item"><span class="device-label">Battery Voltage</span><span class="device-value" id="battery-voltage">—</span></div>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Low Threshold</span>
+              <input type="range" min="5" max="30" value="15" id="battery-low-threshold" aria-valuenow="15" aria-valuemin="5" aria-valuemax="30" />
+              <span class="metric-value" id="battery-low-threshold-val">15%</span>
+            </div>
+          </section>
+        </main>
+        </div>
+        <div class="diag-subtab-content" data-diag-subtab="testing" id="diag-subtab-testing" hidden>
+        <main class="grid">
           <!-- Rumble test -->
           <section class="glass panel" id="panel-rumble">
-            <h2>Rumble Test</h2>
+            <h2>Rumble Test<span class="help-tooltip" data-tooltip="Test vibration motors independently. Adjust amplitude (strength) and frequency (Hz) for left/right motors. Use to verify rumble functionality.">?</span></h2>
             <div class="rumble-visualizer">
               <div class="rumble-bar-container">
                 <span class="rumble-bar-label">L</span>
@@ -797,17 +881,17 @@
             <div class="rumble-controls">
               <div class="metric">
                 <span class="metric-label">L Amplitude</span>
-                <input type="range" min="0" max="100" value="50" id="rumble-amp-left" />
+                <input type="range" min="0" max="100" value="50" id="rumble-amp-left" aria-valuenow="50" aria-valuemin="0" aria-valuemax="100" />
                 <span class="metric-value" id="rumble-amp-left-val">50%</span>
               </div>
               <div class="metric">
                 <span class="metric-label">R Amplitude</span>
-                <input type="range" min="0" max="100" value="50" id="rumble-amp-right" />
+                <input type="range" min="0" max="100" value="50" id="rumble-amp-right" aria-valuenow="50" aria-valuemin="0" aria-valuemax="100" />
                 <span class="metric-value" id="rumble-amp-right-val">50%</span>
               </div>
               <div class="metric">
                 <span class="metric-label">Frequency</span>
-                <input type="range" min="0" max="1500" value="300" id="rumble-freq" />
+                <input type="range" min="0" max="1500" value="300" id="rumble-freq" aria-valuenow="300" aria-valuemin="0" aria-valuemax="1500" />
                 <span class="metric-value" id="rumble-freq-val">300 Hz</span>
               </div>
             </div>
@@ -824,7 +908,7 @@
 
           <!-- NFC/IR Panel -->
           <section class="glass panel" id="panel-nfc">
-            <h2>NFC / IR</h2>
+            <h2>NFC / IR<span class="help-tooltip" data-tooltip="Tests NFC/IR hardware. NFC reads amiibo data, IR detects proximity. USB-only feature — not available over Bluetooth.">?</span></h2>
 
             <!-- USB connection notice: NFC/Amiibo is a Broadcom MCU feature
                  that is not available over USB (USB uses the STM32 bridge). -->
@@ -883,67 +967,19 @@
               </div>
             </div>
           </section>
-
-          <!-- Enhanced battery -->
-          <section class="glass panel" id="panel-battery-enhanced">
-            <h2>Battery</h2>
-            <div class="battery-main">
-              <div class="battery-icon">
-                <div class="battery-body">
-                  <div class="battery-level" id="battery-level-enhanced"></div>
-                </div>
-                <div class="battery-tip"></div>
-              </div>
-              <div class="battery-info">
-                <span class="battery-pct" id="battery-pct-enhanced">—</span>
-                <span class="battery-status" id="battery-status-enhanced">—</span>
-              </div>
-            </div>
-            <div class="power-metrics">
-              <div class="device-item"><span class="device-label">Power Source</span><span class="device-value" id="battery-power-source">—</span></div>
-              <div class="device-item"><span class="device-label">Health</span><span class="device-value" id="battery-health">—</span></div>
-              <div class="device-item"><span class="device-label">Battery Voltage</span><span class="device-value" id="battery-voltage">—</span></div>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Low Threshold</span>
-              <input type="range" min="5" max="30" value="15" id="battery-low-threshold" />
-              <span class="metric-value" id="battery-low-threshold-val">15%</span>
-            </div>
-          </section>
-
-          <!-- ViGEmBus Setup -->
-          <section class="glass panel" id="panel-vigembus">
-            <h2>ViGEmBus Setup</h2>
-            <div class="vigembus-status-row">
-              <span class="status-chip" id="vigembus-chip">
-                <span class="dot" id="vigembus-dot"></span>
-                <span id="vigembus-label">Checking…</span>
-              </span>
-            </div>
-            <div class="device-grid">
-              <div class="device-item"><span class="device-label">Driver Installed</span><span class="device-value" id="vigembus-driver-installed">—</span></div>
-              <div class="device-item"><span class="device-label">Driver Running</span><span class="device-value" id="vigembus-driver-running">—</span></div>
-              <div class="device-item"><span class="device-label">DLL Found</span><span class="device-value" id="vigembus-dll-found">—</span></div>
-              <div class="device-item"><span class="device-label">Virtual Pad</span><span class="device-value" id="vigembus-pad-connected">—</span></div>
-              <div class="device-item"><span class="device-label">Xbox 360 Target</span><span class="device-value" id="vigembus-xbox-connected">—</span></div>
-              <div class="device-item"><span class="device-label">DS4 Target</span><span class="device-value" id="vigembus-ds4-connected">—</span></div>
-            </div>
-            <div class="vigembus-actions">
-              <button class="btn" id="btn-install-vigembus">Install ViGEmBus</button>
-              <button class="btn btn-secondary" id="btn-refresh-vigembus">Refresh Status</button>
-            </div>
-            <p class="vigembus-hint" id="vigembus-hint"></p>
-          </section>
-
+        </main>
+        </div>
+        <div class="diag-subtab-content" data-diag-subtab="logs" id="diag-subtab-logs" hidden>
+        <main class="grid">
           <!-- Raw HID stream log (moved to diagnostics) -->
           <section class="glass panel panel-wide" id="panel-diagnostics-log">
-            <h2>Raw HID Stream</h2>
+            <h2>Raw HID Stream<span class="help-tooltip" data-tooltip="Live raw HID report data from the controller. Shows the binary data packets being received. Useful for protocol debugging.">?</span></h2>
             <pre class="log" id="hid-log"></pre>
           </section>
 
           <!-- Application diagnostics log viewer -->
           <section class="glass panel panel-wide" id="panel-app-logs">
-            <h2>Application Logs</h2>
+            <h2>Application Logs<span class="help-tooltip" data-tooltip="Application-level log messages. Filter by level (Error/Warn/Info/Debug/Trace) and search for specific messages. Use when troubleshooting issues.">?</span></h2>
             <div class="log-toolbar">
               <select id="log-level-filter" class="log-filter">
                 <option value="">All levels</option>
@@ -976,17 +1012,42 @@
               </table>
             </div>
           </section>
+
+          <!-- ViGEmBus Setup -->
+          <section class="glass panel" id="panel-vigembus">
+            <h2>ViGEmBus Setup<span class="help-tooltip" data-tooltip="Status of the ViGEmBus virtual gamepad driver. Required for XInput emulation. If not installed, download from the ViGEmBus GitHub releases.">?</span></h2>
+            <div class="vigembus-status-row">
+              <span class="status-chip" id="vigembus-chip">
+                <span class="dot" id="vigembus-dot"></span>
+                <span id="vigembus-label">Checking…</span>
+              </span>
+            </div>
+            <div class="device-grid">
+              <div class="device-item"><span class="device-label">Driver Installed</span><span class="device-value" id="vigembus-driver-installed">—</span></div>
+              <div class="device-item"><span class="device-label">Driver Running</span><span class="device-value" id="vigembus-driver-running">—</span></div>
+              <div class="device-item"><span class="device-label">DLL Found</span><span class="device-value" id="vigembus-dll-found">—</span></div>
+              <div class="device-item"><span class="device-label">Virtual Pad</span><span class="device-value" id="vigembus-pad-connected">—</span></div>
+              <div class="device-item"><span class="device-label">Xbox 360 Target</span><span class="device-value" id="vigembus-xbox-connected">—</span></div>
+              <div class="device-item"><span class="device-label">DS4 Target</span><span class="device-value" id="vigembus-ds4-connected">—</span></div>
+            </div>
+            <div class="vigembus-actions">
+              <button class="btn" id="btn-install-vigembus">Install ViGEmBus</button>
+              <button class="btn btn-secondary" id="btn-refresh-vigembus">Refresh Status</button>
+            </div>
+            <p class="vigembus-hint" id="vigembus-hint"></p>
+          </section>
         </main>
+        </div>
       </div><!-- /tab-diagnostics -->
 
       <!-- Profiles tab -->
-      <div class="tab-pane" id="tab-profiles">
+      <div class="tab-pane" id="tab-profiles" role="tabpanel" aria-labelledby="tabbtn-profiles" tabindex="0">
         <main class="grid">
           <section class="glass panel">
-            <h2>Active Profile</h2>
+            <h2>Active Profile<span class="help-tooltip" data-tooltip="Shows the currently active profile. Profiles store all settings (deadzones, curves, remaps, etc.) and can be switched instantly.">?</span></h2>
             <div class="metric">
               <span class="metric-label">Active</span>
-              <span class="metric-value" id="active-profile-name">—</span>
+              <span class="metric-value" id="active-profile-name" aria-live="polite">—</span>
             </div>
             <div class="metric">
               <span class="metric-label">Auto-Switch</span>
@@ -996,18 +1057,25 @@
           </section>
 
           <section class="glass panel">
-            <h2>Profiles</h2>
-            <select id="profile-list" size="8" style="width:100%;min-height:140px;"></select>
-            <div style="display:flex;gap:0.5rem;margin-top:0.5rem;flex-wrap:wrap">
+            <h2>Profiles<span class="help-tooltip" data-tooltip="List of saved profiles. Click a card to select, double-click to activate. Each profile preserves a complete configuration snapshot.">?</span></h2>
+            <div class="profile-cards-grid" id="profile-cards-grid" role="listbox" aria-label="Profile list">
+              <!-- Profile cards will be populated by JS -->
+            </div>
+            <div class="empty-state" id="profiles-empty" hidden>
+              <div class="empty-icon">📋</div>
+              <p>No profiles yet</p>
+              <p class="empty-desc">Create a profile to save your settings</p>
+            </div>
+            <div class="btn-row-wrap">
               <button class="btn" id="btn-new-profile">New</button>
-              <button class="btn" id="btn-delete-profile">Delete</button>
-              <button class="btn" id="btn-export-profiles">Export</button>
-              <button class="btn" id="btn-import-profiles">Import</button>
+              <button class="btn btn-danger" id="btn-delete-profile">Delete</button>
+              <button class="btn btn-secondary" id="btn-export-profiles">Export</button>
+              <button class="btn btn-secondary" id="btn-import-profiles">Import</button>
             </div>
           </section>
 
           <section class="glass panel panel-wide">
-            <h2>Profile Editor</h2>
+            <h2>Profile Editor<span class="help-tooltip" data-tooltip="Edit the selected profile's name and auto-switch rules. Auto-rules can switch profiles automatically based on the active application.">?</span></h2>
             <div class="metric">
               <label class="metric-label" for="profile-name">Name</label>
               <input type="text" id="profile-name" placeholder="Profile name" />
@@ -1019,7 +1087,7 @@
             <h3>Auto Rules</h3>
             <div id="profile-rules-list"></div>
             <button class="btn" id="btn-add-rule">Add Rule</button>
-            <div style="display:flex;gap:0.5rem;margin-top:0.75rem">
+            <div class="btn-row">
               <button class="btn" id="btn-save-profile">Save Profile</button>
               <button class="btn" id="btn-cancel-profile">Cancel</button>
             </div>
@@ -1028,16 +1096,19 @@
       </div>
 
       <!-- Settings tab -->
-      <div class="tab-pane" id="tab-settings">
+      <div class="tab-pane" id="tab-settings" role="tabpanel" aria-labelledby="tabbtn-settings" tabindex="0">
         <div class="settings-layout">
           <!-- Sidebar sub-navigation -->
           <nav class="settings-nav glass" aria-label="Settings sections">
             <button class="settings-nav-btn active" data-settings-section="persistence" aria-label="Config persistence settings">Persistence</button>
-            <button class="settings-nav-btn" data-settings-section="hidhide" aria-label="HidHide controller cloaking settings">HidHide</button>
+            <button class="settings-nav-btn" data-settings-section="controller-hiding" aria-label="Controller hiding settings">Controller Hiding</button>
+            <button class="settings-nav-btn" data-settings-section="input-emulation" aria-label="Input Emulation">Input Emulation</button>
             <button class="settings-nav-btn" data-settings-section="connection" aria-label="Connection settings">Connection</button>
             <button class="settings-nav-btn" data-settings-section="battery" aria-label="Battery and polling settings">Battery</button>
             <button class="settings-nav-btn" data-settings-section="button-bindings" aria-label="Per-button turbo and toggle bindings">Button Bindings</button>
             <button class="settings-nav-btn" data-settings-section="notifications" aria-label="Notification settings">Notifications</button>
+            <button class="settings-nav-btn" data-settings-section="system" aria-label="System Integration">System Integration</button>
+            <button class="settings-nav-btn" data-settings-section="privacy" aria-label="Privacy settings">Privacy</button>
             <button class="settings-nav-btn" data-settings-section="about" aria-label="About OxideLink">About</button>
           </nav>
 
@@ -1045,7 +1116,7 @@
           <main class="settings-content">
             <!-- Persistence section -->
             <section class="glass panel settings-section active" id="settings-persistence" aria-labelledby="settings-persistence-title">
-              <h2 id="settings-persistence-title" class="panel-title">Config Persistence</h2>
+              <h2 id="settings-persistence-title" class="panel-title">Config Persistence<span class="help-tooltip" data-tooltip="Export, import, or reset all OxideLink configuration. Export saves a JSON backup, import restores from backup, reset returns to factory defaults.">?</span></h2>
               <p class="settings-desc">Settings are automatically saved to disk and restored on restart.</p>
               <div class="settings-row toggle-row-left">
                 <label class="toggle-switch">
@@ -1065,9 +1136,9 @@
               </div>
             </section>
 
-            <!-- HidHide section -->
-            <section class="glass panel settings-section" id="settings-hidhide" aria-labelledby="settings-hidhide-title" hidden>
-              <h2 id="settings-hidhide-title" class="panel-title">Hide Physical Controller</h2>
+            <!-- Controller Hiding section (merged from HidHide tab) -->
+            <section class="glass panel settings-section" id="settings-controller-hiding" aria-labelledby="settings-controller-hiding-title" hidden>
+              <h2 id="settings-controller-hiding-title" class="panel-title">Controller Hiding<span class="help-tooltip" data-tooltip="HidHide configuration. Hiding the physical controller prevents games from seeing it directly, ensuring they use OxideLink's virtual controller instead. Requires HidHide driver.">?</span></h2>
               <p class="settings-desc">Use HidHide to cloak the physical Nintendo Switch Pro Controller from Windows games while OxideLink stays whitelisted.</p>
               <div class="settings-row toggle-row-left">
                 <label class="toggle-switch">
@@ -1096,14 +1167,63 @@
                 <code class="settings-path" id="hidhide-device-path">—</code>
               </div>
               <div class="settings-row settings-actions">
-                <button class="btn" id="btn-refresh-hidhide" aria-label="Refresh HidHide status">Refresh Status</button>
+                <button class="btn btn-secondary" id="btn-refresh-hidhide" aria-label="Refresh HidHide status">Refresh Status</button>
+                <button class="btn" id="btn-hidhide-hide">Hide</button>
+                <button class="btn btn-secondary" id="btn-hidhide-unhide">Unhide</button>
               </div>
               <p class="vigembus-hint" id="hidhide-message"></p>
             </section>
 
+            <!-- Input Emulation section -->
+            <section class="glass panel settings-section" id="settings-input-emulation" aria-labelledby="settings-input-emulation-title" hidden>
+              <h2 id="settings-input-emulation-title" class="panel-title">Input Emulation<span class="help-tooltip" data-tooltip="Keyboard/mouse emulation settings. When enabled, controller inputs can simulate keyboard keys and mouse movement. Anti-cheat mode uses a compatible input method for protected games.">?</span></h2>
+              <p class="settings-desc">Keyboard and mouse emulation output from controller inputs.</p>
+              <div class="settings-row toggle-row-left">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="kbm-enabled" />
+                  <span class="toggle-slider"></span>
+                </label>
+                <label for="kbm-enabled" class="toggle-label">Enable KB/M output</label>
+              </div>
+              <div class="settings-row toggle-row-left">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="kbm-anti-cheat" />
+                  <span class="toggle-slider"></span>
+                </label>
+                <label for="kbm-anti-cheat" class="toggle-label">Anti-cheat compatibility mode</label>
+              </div>
+              <div class="settings-row">
+                <span class="settings-label">Mouse sensitivity</span>
+                <input type="number" id="kbm-mouse-sens" value="1" step="0.1" />
+              </div>
+              <div class="settings-row">
+                <span class="settings-label">Key repeat delay (ms)</span>
+                <input type="number" id="kbm-key-delay" value="250" />
+              </div>
+              <div class="settings-row">
+                <span class="settings-label">Key repeat rate (ms)</span>
+                <input type="number" id="kbm-key-rate" value="33" />
+              </div>
+              <div class="settings-row settings-actions">
+                <button class="btn" id="btn-kbm-apply">Apply Settings</button>
+              </div>
+              <div class="settings-row">
+                <span class="settings-label">Test key</span>
+                <input type="text" id="kbm-test-key" placeholder="a, space, enter ..." value="a" />
+              </div>
+              <div class="settings-row settings-actions">
+                <button class="btn" id="btn-kbm-test-down">Key Down</button>
+                <button class="btn" id="btn-kbm-test-up">Key Up</button>
+              </div>
+              <div class="settings-row">
+                <span class="settings-label">Status</span>
+                <span class="settings-value" id="kbm-status" aria-live="polite">—</span>
+              </div>
+            </section>
+
             <!-- Connection section -->
             <section class="glass panel settings-section" id="settings-connection" aria-labelledby="settings-connection-title" hidden>
-              <h2 id="settings-connection-title" class="panel-title">Connection</h2>
+              <h2 id="settings-connection-title" class="panel-title">Connection<span class="help-tooltip" data-tooltip="Connection settings: polling interval (how often to read controller data), reconnect interval (retry delay after disconnection). Lower polling = lower latency but more CPU.">?</span></h2>
               <p class="settings-desc">Connection and reconnection behavior. Supports both Bluetooth and USB.</p>
               <div class="settings-row toggle-row-left">
                 <label class="toggle-switch">
@@ -1114,7 +1234,7 @@
               </div>
               <div class="settings-row">
                 <label for="cfg-reconnect-interval" class="settings-label">Reconnect interval: <span id="reconnect-interval-val">3</span>s</label>
-                <input type="range" id="cfg-reconnect-interval" min="1" max="10" value="3" step="1" aria-label="Reconnect interval in seconds">
+                <input type="range" id="cfg-reconnect-interval" min="1" max="10" value="3" step="1" aria-label="Reconnect interval in seconds" aria-valuenow="3" aria-valuemin="1" aria-valuemax="10">
               </div>
               <div class="settings-row toggle-row-left">
                 <label class="toggle-switch">
@@ -1152,7 +1272,7 @@
 
             <!-- Battery section -->
             <section class="glass panel settings-section" id="settings-battery" aria-labelledby="settings-battery-title" hidden>
-              <h2 id="settings-battery-title" class="panel-title">Battery & Polling</h2>
+              <h2 id="settings-battery-title" class="panel-title">Battery & Polling<span class="help-tooltip" data-tooltip="Low battery warning threshold. When battery drops below this percentage, a notification is shown.">?</span></h2>
               <p class="settings-desc">Battery voltage polling interval via subcommand 0x50.</p>
               <div class="settings-row">
                 <label for="cfg-battery-polling" class="settings-label">Polling interval</label>
@@ -1167,7 +1287,7 @@
 
             <!-- Notifications section -->
             <section class="glass panel settings-section" id="settings-notifications" aria-labelledby="settings-notifications-title" hidden>
-              <h2 id="settings-notifications-title" class="panel-title">Notifications</h2>
+              <h2 id="settings-notifications-title" class="panel-title">Notifications<span class="help-tooltip" data-tooltip="Configure which notifications appear. Enable/disable categories and individual notification types. Notifications appear as Windows toast notifications.">?</span></h2>
               <p class="settings-desc">Native Windows toast notifications for major events. Click a category to see which events it covers.</p>
               <div class="settings-row toggle-row-left">
                 <label class="toggle-switch">
@@ -1277,22 +1397,105 @@
 
             <!-- Button bindings section -->
             <section class="glass panel settings-section" id="settings-button-bindings" aria-labelledby="settings-button-bindings-title" hidden>
-              <h2 id="settings-button-bindings-title" class="panel-title">Button Bindings</h2>
+              <h2 id="settings-button-bindings-title" class="panel-title">Button Bindings<span class="help-tooltip" data-tooltip="Global button binding overrides. These mappings apply regardless of the active profile. Use for universal bindings like a home button shortcut.">?</span></h2>
               <p class="settings-desc">Assign Normal, Turbo, or Toggle behavior to any Pro Controller button.</p>
               <div class="settings-row">
                 <label for="binding-global-interval" class="settings-label">Global turbo interval (ms)</label>
-                <input type="number" id="binding-global-interval" min="10" max="5000" value="100" style="width: 80px" />
+                <input type="number" id="binding-global-interval" min="10" max="5000" value="100" class="input-narrow" /><!-- TODO: move .input-narrow to styles.css -->
               </div>
               <div class="settings-row">
                 <label for="binding-global-duty" class="settings-label">Global turbo duty cycle</label>
-                <input type="number" id="binding-global-duty" min="0.05" max="0.95" step="0.05" value="0.5" style="width: 80px" />
+                <input type="number" id="binding-global-duty" min="0.05" max="0.95" step="0.05" value="0.5" class="input-narrow" /><!-- TODO: move .input-narrow to styles.css -->
               </div>
               <div id="bindings-list" class="bindings-list"></div>
             </section>
 
+            <!-- System Integration section (merged from Tray/Startup tab) -->
+            <section class="glass panel settings-section" id="settings-system" aria-labelledby="settings-system-title" hidden>
+              <h2 id="settings-system-title" class="panel-title">System Integration<span class="help-tooltip" data-tooltip="Windows system integration: start with Windows (auto-launch on login), minimize to tray (hide window instead of quitting). Tray icon provides quick access.">?</span></h2>
+              <p class="settings-desc">Tray and Windows startup integration.</p>
+              <div class="settings-row">
+                <span class="settings-label">Tray state</span>
+                <span class="settings-value" id="tray-tab-state" aria-live="polite">—</span>
+              </div>
+              <div class="settings-row toggle-row-left">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tray-auto-start" />
+                  <span class="toggle-slider"></span>
+                </label>
+                <label for="tray-auto-start" class="toggle-label">Start with Windows</label>
+              </div>
+              <div class="settings-row toggle-row-left">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="tray-minimize" />
+                  <span class="toggle-slider"></span>
+                </label>
+                <label for="tray-minimize" class="toggle-label">Minimize to tray on close</label>
+              </div>
+              <div class="settings-row settings-actions">
+                <button class="btn btn-secondary" id="btn-tray-refresh">Refresh</button>
+                <button class="btn" id="btn-tray-apply">Apply</button>
+                <button class="btn btn-secondary" id="btn-tray-show">Show Window</button>
+                <button class="btn btn-secondary" id="btn-tray-hide">Hide Window</button>
+              </div>
+            </section>
+
+            <!-- Privacy section (merged from Telemetry/Privacy tab) -->
+            <section class="glass panel settings-section" id="settings-privacy" aria-labelledby="settings-privacy-title" hidden>
+              <h2 id="settings-privacy-title" class="panel-title">Privacy<span class="help-tooltip" data-tooltip="Telemetry and crash reporting settings. Telemetry sends anonymous usage data to improve OxideLink. Crash reporting sends error reports when the app crashes. All data is anonymized.">?</span></h2>
+              <p class="settings-desc">Telemetry and crash reporting settings.</p>
+              <div class="settings-row toggle-row-left">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="telemetry-enabled" />
+                  <span class="toggle-slider"></span>
+                </label>
+                <label for="telemetry-enabled" class="toggle-label">Enable telemetry</label>
+              </div>
+              <div class="settings-row">
+                <span class="settings-label">Telemetry key</span>
+                <input type="text" id="telemetry-key" placeholder="Aptabase app key (optional)" aria-label="Aptabase app key" />
+              </div>
+              <div class="settings-row settings-actions">
+                <button class="btn" id="btn-telemetry-apply">Apply Telemetry</button>
+              </div>
+              <div class="settings-row">
+                <span class="settings-label" id="telemetry-status" aria-live="polite"></span>
+              </div>
+              <h3 class="settings-subheading">ALLOWED EVENTS</h3>
+              <div class="allowed-events" id="telemetry-allowed-events"></div>
+
+              <h3 class="settings-subheading">CRASH REPORTING</h3>
+              <div class="settings-row toggle-row-left">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="crash-enabled" />
+                  <span class="toggle-slider"></span>
+                </label>
+                <label for="crash-enabled" class="toggle-label">Enable crash reporting</label>
+              </div>
+              <div class="settings-row">
+                <span class="settings-label">Sentry DSN (or "test")</span>
+                <input type="text" id="crash-dsn" placeholder="https://... or test" aria-label="Sentry DSN" />
+              </div>
+              <div class="settings-row settings-actions">
+                <button class="btn" id="btn-crash-apply">Apply Crash Reporting</button>
+              </div>
+              <div class="settings-row">
+                <span class="settings-label" id="crash-status" aria-live="polite"></span>
+              </div>
+              <div class="settings-row">
+                <span class="settings-label">Test event name</span>
+                <input type="text" id="telemetry-event-name" value="test_event" aria-label="Test event name" />
+              </div>
+              <div class="settings-row settings-actions">
+                <button class="btn btn-secondary" id="btn-record-telemetry">Record Test Event</button>
+              </div>
+              <h3 class="settings-subheading">PRIVACY SUMMARY</h3>
+              <div class="allowed-events" id="telemetry-privacy-summary"></div>
+            </section>
+
             <!-- About section -->
             <section class="glass panel settings-section" id="settings-about" aria-labelledby="settings-about-title" hidden>
-              <h2 id="settings-about-title" class="panel-title">About</h2>
+              <h2 id="settings-about-title" class="panel-title">About<span class="help-tooltip" data-tooltip="OxideLink version, controller firmware, and update configuration. Check for updates to download the latest release.">?</span></h2>
               <div class="settings-row">
                 <span class="settings-label">OxideLink version</span>
                 <span class="settings-value" id="about-app-version">0.1.0</span>
@@ -1309,20 +1512,43 @@
                 <button class="btn" id="btn-open-github" aria-label="Open OxideLink GitHub page">GitHub</button>
                 <button class="btn" id="btn-open-logs" aria-label="Open logs folder">Open Logs Folder</button>
               </div>
+
+              <!-- Updates subsection (merged from Updater tab) -->
+              <h3 class="settings-subheading">UPDATES</h3>
+              <div class="settings-row">
+                <span class="settings-label">Update endpoint</span>
+                <input type="text" id="update-endpoint" placeholder="https://example.com/oxidelink/updater.json" />
+              </div>
+              <div class="settings-row settings-actions">
+                <button class="btn btn-secondary" id="btn-update-get-endpoint">Get Endpoint</button>
+                <button class="btn btn-secondary" id="btn-update-set-endpoint">Set Endpoint</button>
+                <button class="btn" id="btn-check-update">Check for Updates</button>
+                <button class="btn" id="btn-install-update">Install Update</button>
+              </div>
+              <div class="settings-row">
+                <span class="settings-label">Status</span>
+                <span class="settings-value" id="updater-status" aria-live="polite">—</span>
+              </div>
             </section>
           </main>
         </div>
       </div><!-- /tab-settings -->
 
       <!-- Macros tab -->
-      <div class="tab-pane" id="tab-macros">
+      <div class="tab-pane" id="tab-macros" role="tabpanel" aria-labelledby="tabbtn-macros" tabindex="0">
         <main class="grid">
           <section class="glass panel" id="panel-macro-list">
-            <h2>Macros</h2>
+            <h2>Macros<span class="help-tooltip" data-tooltip="List of saved macros. Macros record button sequences that can be replayed. Useful for automating repetitive inputs in games.">?</span></h2>
             <div class="metric">
               <input type="text" id="macro-name" placeholder="Macro name" />
             </div>
-            <ul id="macro-list" class="macro-list"></ul>
+            <ul id="macro-list" class="macro-list">
+              <li class="empty-state" id="macros-empty" hidden>
+                <div class="empty-icon">🎬</div>
+                <p>No macros yet</p>
+                <p class="empty-desc">Record a macro to automate button sequences</p>
+              </li>
+            </ul>
             <div class="macro-actions">
               <button class="btn" id="btn-macro-record">Record</button>
               <button class="btn" id="btn-macro-stop" disabled>Stop</button>
@@ -1330,11 +1556,11 @@
               <button class="btn" id="btn-macro-save">Save</button>
               <button class="btn btn-danger" id="btn-macro-delete" disabled>Delete</button>
             </div>
-            <div class="metric" id="macro-status">Idle</div>
+            <div class="metric" id="macro-status" aria-live="polite">Idle</div>
           </section>
 
           <section class="glass panel" id="panel-macro-editor">
-            <h2>Step Editor</h2>
+            <h2>Step Editor<span class="help-tooltip" data-tooltip="Build macros step-by-step. Each step can press/release a button, wait, or trigger a conditional action. The timeline shows the sequence visually.">?</span></h2>
             <div class="macro-step-form">
               <select id="macro-step-type">
                 <option value="wait_ms">Wait (ms)</option>
@@ -1388,25 +1614,41 @@
               </div>
               <button class="btn" id="btn-macro-add-step">Add Step</button>
             </div>
-            <ol id="macro-steps" class="macro-steps"></ol>
+            <div class="timeline-view" id="macro-timeline" aria-label="Macro timeline visualization">
+              <div class="timeline-track" id="timeline-track"></div>
+              <div class="timeline-ruler">
+                <span>0s</span>
+                <span>1s</span>
+                <span>2s</span>
+                <span>3s</span>
+                <span>4s</span>
+                <span>5s</span>
+              </div>
+            </div>
+            <ol id="macro-steps" class="macro-steps">
+              <li class="empty-state" id="macro-steps-empty" hidden>
+                <p>No steps yet</p>
+                <p class="empty-desc">Add steps below to build your macro</p>
+              </li>
+            </ol>
           </section>
         </main>
       </div><!-- /tab-macros -->
 
       <!-- Curves / Zones tab -->
-      <div class="tab-pane" id="tab-curves">
+      <div class="tab-pane" id="tab-curves" role="tabpanel" aria-labelledby="tabbtn-curves" tabindex="0">
         <main class="grid">
           <section class="glass panel">
-            <h2>Response Curve</h2>
+            <h2>Response Curve<span class="help-tooltip" data-tooltip="Interactive curve editor. Drag control points to reshape the input-to-output mapping. Presets provide common configurations. Affects how stick movements translate to game input.">?</span></h2>
             <div class="curve-editor-wrap">
-              <canvas id="curve-editor-canvas" width="360" height="360" aria-label="Response curve editor"></canvas>
+              <canvas id="curve-editor-canvas" width="360" height="360" role="img" aria-label="Interactive response curve editor"></canvas>
             </div>
             <div class="curve-presets">
-              <button class="btn" data-curve-preset="linear">Linear</button>
-              <button class="btn" data-curve-preset="exponential" data-power="2">Aggressive</button>
-              <button class="btn" data-curve-preset="exponential" data-power="3">Precision</button>
-              <button class="btn" data-curve-preset="scurve">Smooth</button>
-              <button class="btn" data-curve-preset="bezier">Bezier</button>
+              <button class="btn preset-btn" data-curve-preset="linear" data-preset="linear">Linear</button>
+              <button class="btn preset-btn" data-curve-preset="exponential" data-power="2" data-preset="aggressive">Aggressive</button>
+              <button class="btn preset-btn" data-curve-preset="exponential" data-power="3" data-preset="precision">Precision</button>
+              <button class="btn preset-btn" data-curve-preset="scurve" data-preset="scurve">Smooth</button>
+              <button class="btn preset-btn" data-curve-preset="bezier" data-preset="bezier">Bezier</button>
             </div>
             <div class="metric">
               <span class="metric-label">Curve Type</span>
@@ -1435,32 +1677,32 @@
               <button class="btn" id="btn-curve-load">Load</button>
               <button class="btn" id="btn-curve-apply">Apply</button>
             </div>
-            <div class="status-msg info" id="curve-status"></div>
+            <div class="status-msg info" id="curve-status" aria-live="polite"></div>
           </section>
 
           <section class="glass panel">
-            <h2>Stick Zones</h2>
+            <h2>Stick Zones<span class="help-tooltip" data-tooltip="Defines sensitivity zones for the analog stick. Deadzone = no input, Low/Medium/High = increasing sensitivity. Drag the rings on the diagram to adjust thresholds visually.">?</span></h2>
             <div class="zone-diagram-wrap">
-              <canvas id="zone-diagram-canvas" width="240" height="240" aria-label="Stick zone diagram (drag rings to edit)"></canvas>
+              <canvas id="zone-diagram-canvas" width="240" height="240" role="img" aria-label="Stick zone diagram showing deadzone, low, medium, and high threshold rings"></canvas>
             </div>
             <div class="metric">
               <span class="metric-label">Deadzone</span>
-              <input type="range" id="zone-deadzone" value="0.0" step="0.01" min="0" max="1" aria-label="Deadzone threshold" />
+              <input type="range" id="zone-deadzone" value="0.0" step="0.01" min="0" max="1" aria-label="Deadzone threshold" aria-valuenow="0.0" aria-valuemin="0" aria-valuemax="1" />
               <span class="metric-value" id="zone-deadzone-val">0.00</span>
             </div>
             <div class="metric">
               <span class="metric-label">Low</span>
-              <input type="range" id="zone-low" value="0.25" step="0.01" min="0" max="1" aria-label="Low zone threshold" />
+              <input type="range" id="zone-low" value="0.25" step="0.01" min="0" max="1" aria-label="Low zone threshold" aria-valuenow="0.25" aria-valuemin="0" aria-valuemax="1" />
               <span class="metric-value" id="zone-low-val">0.25</span>
             </div>
             <div class="metric">
               <span class="metric-label">Medium</span>
-              <input type="range" id="zone-medium" value="0.5" step="0.01" min="0" max="1" aria-label="Medium zone threshold" />
+              <input type="range" id="zone-medium" value="0.5" step="0.01" min="0" max="1" aria-label="Medium zone threshold" aria-valuenow="0.5" aria-valuemin="0" aria-valuemax="1" />
               <span class="metric-value" id="zone-medium-val">0.50</span>
             </div>
             <div class="metric">
               <span class="metric-label">High</span>
-              <input type="range" id="zone-high" value="0.75" step="0.01" min="0" max="1" aria-label="High zone threshold" />
+              <input type="range" id="zone-high" value="0.75" step="0.01" min="0" max="1" aria-label="High zone threshold" aria-valuenow="0.75" aria-valuemin="0" aria-valuemax="1" />
               <span class="metric-value" id="zone-high-val">0.75</span>
             </div>
             <div class="macro-actions">
@@ -1472,96 +1714,12 @@
       </div><!-- /tab-curves -->
 
       <!-- KB/M tab -->
-      <div class="tab-pane" id="tab-kbm">
-        <main class="grid">
-          <section class="glass panel">
-            <h2>Keyboard / Mouse Emulation</h2>
-            <div class="metric toggle-row-left">
-              <label class="toggle-switch">
-                <input type="checkbox" id="kbm-enabled" />
-                <span class="toggle-slider"></span>
-              </label>
-              <label for="kbm-enabled" class="toggle-label">Enable KB/M output</label>
-            </div>
-            <div class="metric toggle-row-left">
-              <label class="toggle-switch">
-                <input type="checkbox" id="kbm-anti-cheat" />
-                <span class="toggle-slider"></span>
-              </label>
-              <label for="kbm-anti-cheat" class="toggle-label">Anti-cheat compatibility mode</label>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Mouse sensitivity</span>
-              <input type="number" id="kbm-mouse-sens" value="1" step="0.1" />
-            </div>
-            <div class="metric">
-              <span class="metric-label">Key repeat delay (ms)</span>
-              <input type="number" id="kbm-key-delay" value="250" />
-            </div>
-            <div class="metric">
-              <span class="metric-label">Key repeat rate (ms)</span>
-              <input type="number" id="kbm-key-rate" value="33" />
-            </div>
-            <button class="btn" id="btn-kbm-apply">Apply Settings</button>
-          </section>
-
-          <section class="glass panel">
-            <h2>Test Key</h2>
-            <div class="metric">
-              <span class="metric-label">Virtual key name</span>
-              <input type="text" id="kbm-test-key" placeholder="a, space, enter ..." value="a" />
-            </div>
-            <div class="macro-actions">
-              <button class="btn" id="btn-kbm-test-down">Key Down</button>
-              <button class="btn" id="btn-kbm-test-up">Key Up</button>
-            </div>
-            <div class="metric" id="kbm-status">—</div>
-          </section>
-        </main>
-      </div><!-- /tab-kbm -->
-
       <!-- HidHide tab -->
-      <div class="tab-pane" id="tab-hidhide">
-        <main class="grid">
-          <section class="glass panel">
-            <h2>HidHide</h2>
-            <div class="metric">
-              <span class="metric-label">Installed</span>
-              <span class="metric-value" id="hidhide-tab-installed">—</span>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Hidden</span>
-              <span class="metric-value" id="hidhide-tab-hidden">—</span>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Device path</span>
-              <code class="metric-value mono" id="hidhide-tab-path">—</code>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Message</span>
-              <span class="metric-value" id="hidhide-tab-message">—</span>
-            </div>
-            <div class="metric toggle-row-left">
-              <label class="toggle-switch">
-                <input type="checkbox" id="hidhide-tab-enabled" />
-                <span class="toggle-slider"></span>
-              </label>
-              <label for="hidhide-tab-enabled" class="toggle-label">Hide physical controller</label>
-            </div>
-            <div class="macro-actions">
-              <button class="btn" id="btn-hidhide-refresh">Refresh</button>
-              <button class="btn" id="btn-hidhide-hide">Hide</button>
-              <button class="btn btn-secondary" id="btn-hidhide-unhide">Unhide</button>
-            </div>
-          </section>
-        </main>
-      </div><!-- /tab-hidhide -->
-
       <!-- Logging tab -->
-      <div class="tab-pane" id="tab-logging">
+      <div class="tab-pane" id="tab-logging" role="tabpanel" aria-labelledby="tabbtn-logging" tabindex="0">
         <main class="grid">
           <section class="glass panel panel-wide">
-            <h2>Application Logs</h2>
+            <h2>Application Logs<span class="help-tooltip" data-tooltip="Real-time application log viewer. Filter by severity level, search messages, and monitor live output. Use the level dropdown to change runtime log verbosity.">?</span></h2>
             <div class="log-toolbar">
               <select id="logging-level-filter" class="log-filter">
                 <option value="">All levels</option>
@@ -1579,7 +1737,7 @@
               <button class="btn" id="btn-logging-refresh">Refresh</button>
               <button class="btn" id="btn-logging-copy">Copy</button>
               <button class="btn btn-secondary" id="btn-logging-clear">Clear</button>
-              <select id="logging-set-level" style="margin-left:auto">
+              <select id="logging-set-level" class="select-auto-margin"><!-- TODO: move .select-auto-margin to styles.css -->
                 <option value="" disabled selected>Set level</option>
                 <option value="error">error</option>
                 <option value="warn">warn</option>
@@ -1601,45 +1759,13 @@
       </div><!-- /tab-logging -->
 
       <!-- Tray / Startup tab -->
-      <div class="tab-pane" id="tab-tray">
-        <main class="grid">
-          <section class="glass panel">
-            <h2>Tray & Startup</h2>
-            <div class="metric">
-              <span class="metric-label">Tray state</span>
-              <span class="metric-value" id="tray-tab-state">—</span>
-            </div>
-            <div class="metric toggle-row-left">
-              <label class="toggle-switch">
-                <input type="checkbox" id="tray-auto-start" />
-                <span class="toggle-slider"></span>
-              </label>
-              <label for="tray-auto-start" class="toggle-label">Start with Windows</label>
-            </div>
-            <div class="metric toggle-row-left">
-              <label class="toggle-switch">
-                <input type="checkbox" id="tray-minimize" />
-                <span class="toggle-slider"></span>
-              </label>
-              <label for="tray-minimize" class="toggle-label">Minimize to tray on close</label>
-            </div>
-            <div class="macro-actions">
-              <button class="btn" id="btn-tray-refresh">Refresh</button>
-              <button class="btn" id="btn-tray-apply">Apply</button>
-              <button class="btn" id="btn-tray-show">Show Window</button>
-              <button class="btn btn-secondary" id="btn-tray-hide">Hide Window</button>
-            </div>
-          </section>
-        </main>
-      </div><!-- /tab-tray -->
-
       <!-- Multi-Controller tab -->
-      <div class="tab-pane" id="tab-multi">
+      <div class="tab-pane" id="tab-multi" role="tabpanel" aria-labelledby="tabbtn-multi" tabindex="0">
         <main class="grid">
           <section class="glass panel panel-wide">
-            <h2>Controllers</h2>
-            <div class="macro-actions" style="margin-bottom:0.75rem">
-              <select id="multi-slot" style="min-width:80px" aria-label="Controller slot">
+            <h2>Controllers<span class="help-tooltip" data-tooltip="Manage multiple connected controllers. Each slot maps to a virtual XInput controller. Set active slot to choose which physical controller is primary. Supports up to 4 controllers.">?</span></h2>
+            <div class="macro-actions">
+              <select id="multi-slot" class="select-narrow" aria-label="Controller slot"><!-- TODO: move .select-narrow to styles.css -->
                 <option value="0">Slot 0</option>
                 <option value="1">Slot 1</option>
                 <option value="2">Slot 2</option>
@@ -1650,7 +1776,7 @@
               <button class="btn btn-secondary" id="btn-multi-rescan">Rescan</button>
             </div>
             <div class="controller-cards" id="multi-controller-cards"></div>
-            <div class="log-table-wrap" style="margin-top:12px">
+            <div class="log-table-wrap">
               <table class="log-table">
                 <thead><tr><th>Slot</th><th>Connected</th><th>Battery</th><th>Transport</th><th>Profile</th></tr></thead>
                 <tbody id="multi-controller-list"></tbody>
@@ -1661,42 +1787,13 @@
       </div><!-- /tab-multi -->
 
       <!-- DSU tab -->
-      <div class="tab-pane" id="tab-dsu">
-        <main class="grid">
-          <section class="glass panel">
-            <h2>DSU / Cemuhook Server</h2>
-            <div class="metric">
-              <span class="metric-label">Status</span>
-              <span class="metric-value" id="dsu-status">—</span>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Bind address</span>
-              <input type="text" id="dsu-bind-address" value="127.0.0.1" />
-            </div>
-            <div class="metric">
-              <span class="metric-label">Port</span>
-              <input type="number" id="dsu-port" value="26760" />
-            </div>
-            <div class="metric">
-              <span class="metric-label">Update rate (Hz)</span>
-              <input type="number" id="dsu-rate" value="60" />
-            </div>
-            <div class="macro-actions">
-              <button class="btn" id="btn-dsu-start">Start</button>
-              <button class="btn btn-secondary" id="btn-dsu-stop">Stop</button>
-              <button class="btn" id="btn-dsu-status">Refresh Status</button>
-            </div>
-          </section>
-        </main>
-      </div><!-- /tab-dsu -->
-
       <!-- Flick Stick tab -->
-      <div class="tab-pane" id="tab-flick">
+      <div class="tab-pane" id="tab-flick" role="tabpanel" aria-labelledby="tabbtn-flick" tabindex="0">
         <main class="grid">
           <section class="glass panel">
-            <h2>Flick Stick</h2>
+            <h2>Flick Stick<span class="help-tooltip" data-tooltip="Flick stick mode interprets the right stick as a rotation control instead of analog aim. Flick the stick to rotate the camera, then rotate to fine-tune. Common in gyro-assisted aiming setups. Threshold = flick sensitivity, Deadzone = ignore small inputs, Smoothing = reduce jitter.">?</span></h2>
             <div class="flick-diagram-wrap">
-              <canvas id="flick-diagram-canvas" width="240" height="240" aria-label="Flick stick diagram"></canvas>
+              <canvas id="flick-diagram-canvas" width="240" height="240" role="img" aria-label="Flick stick diagram showing threshold and deadzone rings"></canvas>
             </div>
             <div class="metric toggle-row-left">
               <label class="toggle-switch">
@@ -1707,7 +1804,8 @@
             </div>
             <div class="metric">
               <span class="metric-label">Flick threshold</span>
-              <input type="number" id="flick-threshold" value="0.9" step="0.01" min="0" max="1" aria-label="Flick threshold" />
+              <input type="range" id="flick-threshold" value="0.9" min="0" max="1" step="0.01" aria-label="Flick threshold" />
+              <span class="slider-val" id="flick-threshold-val">0.50</span>
             </div>
             <div class="metric">
               <span class="metric-label">Rotate rate (deg/s)</span>
@@ -1715,7 +1813,8 @@
             </div>
             <div class="metric">
               <span class="metric-label">Stick deadzone</span>
-              <input type="number" id="flick-deadzone" value="0.15" step="0.01" min="0" max="1" aria-label="Stick deadzone" />
+              <input type="range" id="flick-deadzone" value="0.15" min="0" max="1" step="0.01" aria-label="Stick deadzone" />
+              <span class="slider-val" id="flick-deadzone-val">0.10</span>
             </div>
             <div class="metric">
               <span class="metric-label">Flick cooldown (ms)</span>
@@ -1723,23 +1822,24 @@
             </div>
             <div class="metric">
               <span class="metric-label">Output smoothing</span>
-              <input type="number" id="flick-smoothing" value="0" step="0.01" min="0" max="1" aria-label="Output smoothing" />
+              <input type="range" id="flick-smoothing" value="0" min="0" max="1" step="0.01" aria-label="Output smoothing" />
+              <span class="slider-val" id="flick-smoothing-val">0.50</span>
             </div>
             <div class="macro-actions">
               <button class="btn" id="btn-flick-load">Load</button>
               <button class="btn" id="btn-flick-apply">Apply</button>
               <button class="btn btn-secondary" id="btn-flick-reset-yaw">Reset Yaw</button>
             </div>
-            <div class="status-msg info" id="flick-status"></div>
+            <div class="status-msg info" id="flick-status" aria-live="polite"></div>
           </section>
         </main>
       </div><!-- /tab-flick -->
 
       <!-- NFC / amiibo tab -->
-      <div class="tab-pane" id="tab-nfc">
+      <div class="tab-pane" id="tab-nfc" role="tabpanel" aria-labelledby="tabbtn-nfc" tabindex="0">
         <main class="grid">
           <section class="glass panel">
-            <h2>NFC / Amiibo</h2>
+            <h2>NFC / Amiibo<span class="help-tooltip" data-tooltip="Emulates amiibo NFC tags. Load a .bin file to emulate an amiibo. The controller's NFC reader will broadcast the amiibo data to compatible games. USB-only feature.">?</span></h2>
             <div class="metric toggle-row-left">
               <label class="toggle-switch">
                 <input type="checkbox" id="nfc-tab-enabled" />
@@ -1749,94 +1849,37 @@
             </div>
             <div class="metric">
               <span class="metric-label">Amiibo .bin path</span>
-              <input type="text" id="nfc-amiibo-path" placeholder="C:\\amiibo.bin" aria-label="Amiibo bin file path" />
+              <div class="file-picker-row">
+                <input type="text" id="nfc-amiibo-path" placeholder="No file selected" readonly aria-label="Amiibo file path" />
+                <button class="btn btn-secondary" id="btn-nfc-browse" aria-label="Browse for amiibo file">Browse...</button>
+              </div>
             </div>
             <div class="macro-actions">
-              <button class="btn" id="btn-nfc-get-state">Get State</button>
+              <button class="btn btn-secondary" id="btn-nfc-get-state">Get State</button>
               <button class="btn" id="btn-load-amiibo">Load Amiibo</button>
-              <button class="btn" id="btn-emulate-amiibo">Emulate</button>
+              <button class="btn btn-secondary" id="btn-emulate-amiibo">Emulate</button>
             </div>
-            <div class="status-msg info" id="nfc-tab-status"></div>
-            <div id="nfc-amiibo-info" style="margin-top:8px;display:flex;flex-direction:column;gap:4px"></div>
+            <div class="status-msg info" id="nfc-tab-status" aria-live="polite"></div>
+            <div id="nfc-amiibo-info" class="nfc-amiibo-info">
+              <div class="empty-state" id="nfc-amiibo-empty">
+                <div class="empty-icon">🎫</div>
+                <p>No amiibo loaded</p>
+                <p class="empty-desc">Load an amiibo .bin file to begin</p>
+              </div>
+            </div>
           </section>
         </main>
       </div><!-- /tab-nfc -->
 
       <!-- Updater tab -->
-      <div class="tab-pane" id="tab-updater">
-        <main class="grid">
-          <section class="glass panel">
-            <h2>Updater</h2>
-            <div class="metric">
-              <span class="metric-label">Update endpoint</span>
-              <input type="text" id="update-endpoint" placeholder="https://example.com/oxidelink/updater.json" />
-            </div>
-            <div class="macro-actions">
-              <button class="btn" id="btn-update-get-endpoint">Get Endpoint</button>
-              <button class="btn" id="btn-update-set-endpoint">Set Endpoint</button>
-              <button class="btn" id="btn-check-update">Check for Updates</button>
-              <button class="btn btn-secondary" id="btn-install-update">Install Update</button>
-            </div>
-            <div class="metric" id="updater-status">—</div>
-          </section>
-        </main>
-      </div><!-- /tab-updater -->
-
       <!-- Telemetry / Privacy tab -->
-      <div class="tab-pane" id="tab-telemetry">
-        <main class="grid">
-          <section class="glass panel">
-            <h2>Telemetry</h2>
-            <div class="metric toggle-row-left">
-              <label class="toggle-switch">
-                <input type="checkbox" id="telemetry-enabled" />
-                <span class="toggle-slider"></span>
-              </label>
-              <label for="telemetry-enabled" class="toggle-label">Enable telemetry</label>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Telemetry key</span>
-              <input type="text" id="telemetry-key" placeholder="Aptabase app key (optional)" aria-label="Aptabase app key" />
-            </div>
-            <button class="btn" id="btn-telemetry-apply">Apply Telemetry</button>
-            <div class="status-msg info" id="telemetry-status"></div>
-            <h3 style="margin-top:14px;font-size:12px;color:var(--text-dim);letter-spacing:1px">ALLOWED EVENTS</h3>
-            <div class="allowed-events" id="telemetry-allowed-events"></div>
-          </section>
-
-          <section class="glass panel">
-            <h2>Crash Reporting</h2>
-            <div class="metric toggle-row-left">
-              <label class="toggle-switch">
-                <input type="checkbox" id="crash-enabled" />
-                <span class="toggle-slider"></span>
-              </label>
-              <label for="crash-enabled" class="toggle-label">Enable crash reporting</label>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Sentry DSN (or "test")</span>
-              <input type="text" id="crash-dsn" placeholder="https://... or test" aria-label="Sentry DSN" />
-            </div>
-            <button class="btn" id="btn-crash-apply">Apply Crash Reporting</button>
-            <div class="status-msg info" id="crash-status"></div>
-            <div class="metric">
-              <span class="metric-label">Test event name</span>
-              <input type="text" id="telemetry-event-name" value="test_event" aria-label="Test event name" />
-            </div>
-            <button class="btn btn-secondary" id="btn-record-telemetry">Record Test Event</button>
-            <h3 style="margin-top:14px;font-size:12px;color:var(--text-dim);letter-spacing:1px">PRIVACY SUMMARY</h3>
-            <div class="allowed-events" id="telemetry-privacy-summary"></div>
-          </section>
-        </main>
-      </div><!-- /tab-telemetry -->
-
       <!-- Overlay tab -->
-      <div class="tab-pane" id="tab-overlay">
+      <div class="tab-pane" id="tab-overlay" role="tabpanel" aria-labelledby="tabbtn-overlay" tabindex="0">
         <main class="grid">
           <section class="glass panel panel-wide">
-            <h2>Overlay</h2>
+            <h2>Overlay<span class="help-tooltip" data-tooltip="On-screen display overlay showing battery, profile, and FPS. Configure position, opacity, scale, and which elements are visible. Toggle with the configured hotkey. The preview shows the overlay appearance.">?</span></h2>
             <div class="overlay-preview-wrap">
-              <canvas id="overlay-preview-canvas" width="480" height="270" aria-label="Overlay live preview"></canvas>
+              <canvas id="overlay-preview-canvas" width="480" height="270" role="img" aria-label="Overlay preview showing on-screen display position and elements"></canvas>
             </div>
             <div class="metric toggle-row-left">
               <label class="toggle-switch">
@@ -1851,7 +1894,8 @@
             </div>
             <div class="metric">
               <span class="metric-label">Opacity</span>
-              <input type="number" id="overlay-opacity" min="0" max="1" step="0.05" value="0.9" />
+              <input type="range" id="overlay-opacity" min="0" max="1" step="0.05" value="0.9" />
+              <span class="slider-val" id="overlay-opacity-val">0.80</span>
             </div>
             <div class="metric">
               <span class="metric-label">Position</span>
@@ -1865,7 +1909,8 @@
             </div>
             <div class="metric">
               <span class="metric-label">Scale</span>
-              <input type="number" id="overlay-scale" min="0.25" max="4" step="0.25" value="1" />
+              <input type="range" id="overlay-scale" min="0.25" max="4" step="0.25" value="1" />
+              <span class="slider-val" id="overlay-scale-val">1.00</span>
             </div>
             <div class="metric toggle-row-left">
               <label class="toggle-switch">
@@ -1888,7 +1933,7 @@
               </label>
               <label for="overlay-show-fps" class="toggle-label">Show FPS counter</label>
             </div>
-            <div style="display:flex;gap:0.5rem;margin-top:0.5rem;flex-wrap:wrap">
+            <div class="btn-row-wrap">
               <button class="btn" id="btn-overlay-load">Load Config</button>
               <button class="btn" id="btn-overlay-save">Save Config</button>
               <button class="btn" id="btn-overlay-toggle">Toggle Overlay</button>
@@ -1898,10 +1943,10 @@
       </div><!-- /tab-overlay -->
 
       <!-- Cloud tab -->
-      <div class="tab-pane" id="tab-cloud">
+      <div class="tab-pane" id="tab-cloud" role="tabpanel" aria-labelledby="tabbtn-cloud" tabindex="0">
         <main class="grid">
           <section class="glass panel panel-wide">
-            <h2>Cloud</h2>
+            <h2>Cloud<span class="help-tooltip" data-tooltip="Sync profiles to the cloud. Upload your profiles to share with the community, or download profiles from others using share codes. Requires an API key and accepted terms.">?</span></h2>
             <div class="metric toggle-row-left">
               <label class="toggle-switch">
                 <input type="checkbox" id="cloud-enabled" />
@@ -1928,19 +1973,25 @@
               </label>
               <label for="cloud-accepted-terms" class="toggle-label">I accept the community sharing terms</label>
             </div>
-            <div style="display:flex;gap:0.5rem;margin-top:0.5rem;flex-wrap:wrap">
-              <button class="btn" id="btn-cloud-load">Load Config</button>
-              <button class="btn" id="btn-cloud-save">Save Config</button>
+            <div class="btn-row-wrap">
+              <button class="btn btn-secondary" id="btn-cloud-load">Load Config</button>
+              <button class="btn btn-secondary" id="btn-cloud-save">Save Config</button>
               <button class="btn" id="btn-cloud-list">List Profiles</button>
               <button class="btn" id="btn-cloud-upload">Upload Active</button>
             </div>
-            <div class="metric" style="margin-top:0.5rem">
+            <div class="metric">
               <span class="metric-label">Share code</span>
               <input type="text" id="cloud-share-code" placeholder="Enter code" />
               <button class="btn" id="btn-cloud-download">Download</button>
             </div>
-            <div id="cloud-list" style="margin-top:0.5rem;display:flex;flex-direction:column;gap:0.5rem"></div>
-            <input type="text" id="cloud-search" class="profile-search" placeholder="Search by name, author, or tag…" aria-label="Search community profiles" style="margin-top:0.5rem" />
+            <div id="cloud-list" class="cloud-list">
+              <div class="empty-state" id="cloud-profiles-empty" hidden>
+                <div class="empty-icon">☁️</div>
+                <p>No profiles found</p>
+                <p class="empty-desc">Search for community profiles or upload your own</p>
+              </div>
+            </div>
+            <input type="text" id="cloud-search" class="profile-search" placeholder="Search by name, author, or tag…" aria-label="Search community profiles" />
           </section>
         </main>
       </div><!-- /tab-cloud -->

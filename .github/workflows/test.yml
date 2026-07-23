@@ -52,8 +52,8 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build Tauri app (release)
-        run: npm run tauri build
+      - name: Build Tauri app (release, no bundle)
+        run: npm run tauri build -- --no-bundle
 
       - name: Install tauri-driver
         run: cargo install tauri-driver

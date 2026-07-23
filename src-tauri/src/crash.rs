@@ -219,8 +219,16 @@ mod tests {
     /// Serializes tests that mutate the global `CRASH_ENABLED` flag.
     static CRASH_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
+    /// Helper that locks the test mutex, recovering from any prior poison.
+    macro_rules! crash_mutex_guard {
+        () => {
+            CRASH_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner())
+        };
+    }
+
     #[test]
     fn empty_dsn_initialization_does_not_panic() {
+        let _guard = crash_mutex_guard!();
         let result = std::panic::catch_unwind(|| init_crash_reporting(Some(String::new())));
         assert!(result.is_ok());
     }
@@ -233,6 +241,7 @@ mod tests {
 
     #[test]
     fn crash_reporting_defaults_to_disabled() {
+        let _guard = crash_mutex_guard!();
         init_crash_reporting(None);
         let st = status();
         assert!(!st.enabled);
@@ -242,6 +251,7 @@ mod tests {
 
     #[test]
     fn empty_dsn_is_treated_as_disabled() {
+        let _guard = crash_mutex_guard!();
         init_crash_reporting(Some("   ".to_string()));
         let st = status();
         assert!(!st.enabled);
@@ -251,6 +261,7 @@ mod tests {
 
     #[test]
     fn test_dsn_enables_local_test_mode() {
+        let _guard = crash_mutex_guard!();
         init_crash_reporting(Some("test".to_string()));
         let st = status();
         assert!(st.enabled);
@@ -484,7 +495,7 @@ mod tests {
 
     #[test]
     fn before_send_returns_none_when_disabled() {
-        let _guard = CRASH_TEST_MUTEX.lock().unwrap();
+        let _guard = crash_mutex_guard!();
         CRASH_ENABLED.store(false, Ordering::SeqCst);
         let event = Event::default();
         let result = before_send(event);
@@ -493,7 +504,7 @@ mod tests {
 
     #[test]
     fn before_send_strips_pii_metadata_fields_when_enabled() {
-        let _guard = CRASH_TEST_MUTEX.lock().unwrap();
+        let _guard = crash_mutex_guard!();
         CRASH_ENABLED.store(true, Ordering::SeqCst);
         let mut event = Event::default();
         event.server_name = Some(Cow::Owned("my-server".to_string()));
@@ -522,7 +533,7 @@ mod tests {
 
     #[test]
     fn before_send_scrubs_message_pii() {
-        let _guard = CRASH_TEST_MUTEX.lock().unwrap();
+        let _guard = crash_mutex_guard!();
         CRASH_ENABLED.store(true, Ordering::SeqCst);
         let mut event = Event::default();
         event.message = Some("error at 192.168.0.1 for C:\\Users\\me\\file.txt".to_string());
@@ -536,7 +547,7 @@ mod tests {
 
     #[test]
     fn before_send_scrubs_exception_value_and_stacktrace() {
-        let _guard = CRASH_TEST_MUTEX.lock().unwrap();
+        let _guard = crash_mutex_guard!();
         CRASH_ENABLED.store(true, Ordering::SeqCst);
         let mut event = Event::default();
         let mut ex = Exception::default();
@@ -565,7 +576,7 @@ mod tests {
 
     #[test]
     fn before_send_scrubs_raw_stacktrace() {
-        let _guard = CRASH_TEST_MUTEX.lock().unwrap();
+        let _guard = crash_mutex_guard!();
         CRASH_ENABLED.store(true, Ordering::SeqCst);
         let mut event = Event::default();
         let mut ex = Exception::default();
@@ -633,6 +644,7 @@ mod tests {
 
     #[test]
     fn set_crash_reporting_disabled_clears_state() {
+        let _guard = crash_mutex_guard!();
         let st = set_crash_reporting_enabled(false, None);
         assert!(!st.enabled);
         assert!(!st.test_mode);
@@ -641,6 +653,7 @@ mod tests {
 
     #[test]
     fn set_crash_reporting_enabled_with_test_dsn() {
+        let _guard = crash_mutex_guard!();
         let st = set_crash_reporting_enabled(true, Some("test".to_string()));
         assert!(st.enabled);
         assert!(st.test_mode);

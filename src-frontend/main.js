@@ -49,6 +49,45 @@ function flash(node) {
   node.classList.add("flash");
 }
 
+// ===== Toast Notification System (P2.1) =====
+function showToast(message, type = 'info', duration = 3000) {
+  let container = document.querySelector('.toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.className = 'toast-container';
+    document.body.appendChild(container);
+  }
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.animation = 'toast-slide-in 0.3s var(--ease-mercury) reverse';
+    setTimeout(() => {
+      if (toast.parentNode) toast.parentNode.removeChild(toast);
+    }, 300);
+  }, duration);
+}
+window.showToast = showToast;
+
+// ===== Loading Spinner Helper (P2.2) =====
+function setButtonLoading(btn, loading) {
+  if (loading) {
+    if (!btn.classList.contains('loading')) {
+      btn.classList.add('loading');
+      btn.dataset.originalHtml = btn.innerHTML;
+      btn.innerHTML = '<span class="loading-spinner"></span>' + btn.textContent;
+    }
+  } else {
+    btn.classList.remove('loading');
+    if (btn.dataset.originalHtml) {
+      btn.innerHTML = btn.dataset.originalHtml;
+      delete btn.dataset.originalHtml;
+    }
+  }
+}
+window.setButtonLoading = setButtonLoading;
+
 // --- Diagnostics log viewer helpers ---
 // escapeHtml, formatLogTimestamp, logLevelClass imported from ./utils.js
 
@@ -145,6 +184,10 @@ async function clearAppLogs() {
 // Track the current connection transport ("USB" / "Bluetooth") so the
 // status chip can show it alongside the connected/disconnected state.
 let currentTransport = null;
+
+// Track the latest left-stick position for the flick diagram live dot (P2.8).
+let currentStickX = 0;
+let currentStickY = 0;
 
 function setConnection(state) {
   const chip = el("connection-chip");
@@ -432,6 +475,9 @@ function updateWireframe(data) {
   if (data.left_stick) {
     updateStick("stick-left-cap", data.left_stick);
     updateStickCalDotFromState("left", data.left_stick);
+    // Track left stick position for the flick diagram live dot (P2.8)
+    currentStickX = Math.max(-1, Math.min(1, data.left_stick.x));
+    currentStickY = Math.max(-1, Math.min(1, data.left_stick.y));
   }
   if (data.right_stick) {
     updateStick("stick-right-cap", data.right_stick);
@@ -881,13 +927,74 @@ if (invoke) {
 // =============================================================================
 // Tab navigation
 // =============================================================================
+function activateTab(btn) {
+  document.querySelectorAll(".tab-btn").forEach((b) => {
+    b.classList.remove("active");
+    b.setAttribute("aria-selected", "false");
+  });
+  document.querySelectorAll(".tab-pane").forEach((p) => p.classList.remove("active"));
+  btn.classList.add("active");
+  btn.setAttribute("aria-selected", "true");
+  const pane = el(`tab-${btn.dataset.tab}`);
+  if (pane) pane.classList.add("active");
+}
+
 document.querySelectorAll(".tab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => activateTab(btn));
+  btn.addEventListener("keydown", (e) => {
+    const list = btn.closest('[role="tablist"]');
+    if (!list) return;
+    const tabs = Array.from(list.querySelectorAll('[role="tab"]'));
+    const idx = tabs.indexOf(btn);
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      const next = tabs[(idx + 1) % tabs.length];
+      next.focus();
+      activateTab(next);
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      const prev = tabs[(idx - 1 + tabs.length) % tabs.length];
+      prev.focus();
+      activateTab(prev);
+    } else if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      activateTab(btn);
+    }
+  });
+});
+
+// =============================================================================
+// Sub-tab switching (Calibration & Diagnostics)
+// =============================================================================
+// Calibration sub-tabs
+document.querySelectorAll('[data-cal-subtab].sub-tab-btn').forEach((btn) => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
-    document.querySelectorAll(".tab-pane").forEach((p) => p.classList.remove("active"));
+    const target = btn.dataset.calSubtab;
+    document.querySelectorAll('[data-cal-subtab].sub-tab-btn').forEach((b) => {
+      b.classList.remove("active");
+      b.setAttribute("aria-selected", "false");
+    });
     btn.classList.add("active");
-    const pane = el(`tab-${btn.dataset.tab}`);
-    if (pane) pane.classList.add("active");
+    btn.setAttribute("aria-selected", "true");
+    document.querySelectorAll('.cal-subtab-content').forEach((c) => {
+      c.hidden = c.dataset.calSubtab !== target;
+    });
+  });
+});
+
+// Diagnostics sub-tabs
+document.querySelectorAll('[data-diag-subtab].sub-tab-btn').forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const target = btn.dataset.diagSubtab;
+    document.querySelectorAll('[data-diag-subtab].sub-tab-btn').forEach((b) => {
+      b.classList.remove("active");
+      b.setAttribute("aria-selected", "false");
+    });
+    btn.classList.add("active");
+    btn.setAttribute("aria-selected", "true");
+    document.querySelectorAll('.diag-subtab-content').forEach((c) => {
+      c.hidden = c.dataset.diagSubtab !== target;
+    });
   });
 });
 
@@ -1637,6 +1744,11 @@ el("btn-recalibrate")?.addEventListener("click", async () => {
 });
 
 el("btn-reset-factory")?.addEventListener("click", async () => {
+  const confirmed = await showConfirmDialog(
+    "Reset to Factory Calibration",
+    "This will erase all user calibration data and restore factory defaults. This cannot be undone."
+  );
+  if (!confirmed) return;
   appendLog("[CAL] Resetting to factory calibration");
   if (invoke) {
     try {
@@ -1648,7 +1760,12 @@ el("btn-reset-factory")?.addEventListener("click", async () => {
   }
 });
 
-el("btn-clear-drift")?.addEventListener("click", () => {
+el("btn-clear-drift")?.addEventListener("click", async () => {
+  const confirmed = await showConfirmDialog(
+    "Clear Drift Compensation",
+    "This will remove all drift compensation data. Your sticks may need recalibration."
+  );
+  if (!confirmed) return;
   stickTrails.left = [];
   stickTrails.right = [];
   const lt = el("stick-left-trail");
@@ -1767,6 +1884,33 @@ const latencyAvg = new RollingAverage(1000);
 const reportRateAvg = new RollingAverage(1000);
 const packetLossAvg = new RollingAverage(1000);
 
+function updateConnectionHealthScore(latency, packetLoss, rate) {
+  const gauge = document.getElementById('connection-health-gauge');
+  const gaugeText = document.getElementById('gauge-text');
+  const gaugeFill = document.getElementById('gauge-fill-circle');
+  if (!gauge || !gaugeText || !gaugeFill) return;
+
+  // Calculate score 0-100
+  let score = 100;
+  if (latency > 10) score -= Math.min(30, (latency - 10) * 2);
+  if (packetLoss > 0) score -= Math.min(40, packetLoss * 4);
+  if (rate < 100) score -= Math.min(30, (100 - rate) * 0.3);
+  score = Math.max(0, Math.min(100, Math.round(score)));
+
+  gaugeText.textContent = score;
+  gauge.setAttribute('aria-valuenow', score);
+
+  // Update circle (circumference = 2 * PI * 34 = 213.6)
+  const circumference = 213.6;
+  const offset = circumference - (score / 100) * circumference;
+  gaugeFill.style.strokeDashoffset = offset;
+
+  // Color based on score
+  if (score >= 80) gaugeFill.style.stroke = 'var(--health-good)';
+  else if (score >= 50) gaugeFill.style.stroke = 'var(--health-warn)';
+  else gaugeFill.style.stroke = 'var(--health-critical)';
+}
+
 function updateConnectionQuality(quality) {
   const latency = quality.latency_ms ?? quality.latency ?? 0;
   const rate = quality.report_rate_hz ?? quality.report_rate ?? 0;
@@ -1784,6 +1928,12 @@ function updateConnectionQuality(quality) {
   setText("conn-total-packets", String(quality.total_packets ?? 0));
   setText("conn-dropped", String(quality.dropped ?? 0));
   setText("conn-retries", String(quality.retries ?? 0));
+  // Update health gauge with smoothed values
+  updateConnectionHealthScore(
+    latS !== null ? latS : latency,
+    lossS !== null ? lossS : packetLoss,
+    rateS !== null ? rateS : rate
+  );
   // Latency bar fill (0-100ms scale) — use smoothed value
   const fill = el("latency-bar-fill");
   if (fill) {
@@ -2114,8 +2264,19 @@ document.querySelectorAll(".settings-nav-btn").forEach((btn) => {
     document.querySelectorAll(".settings-section").forEach((s) => {
       s.hidden = s.id !== "settings-" + target;
     });
+    // Load data for the newly-shown settings section
+    onSettingsSectionShown(target);
   });
 });
+
+// Settings section data loaders (for merged tab content)
+function onSettingsSectionShown(section) {
+  if (section === "input-emulation") loadKbm();
+  if (section === "controller-hiding") refreshHidHideStatus();
+  if (section === "system") loadTrayTab();
+  if (section === "privacy") { loadTelemetry(); loadCrashReporting(); }
+  if (section === "about") getUpdateEndpoint();
+}
 
 // --- Config persistence controls ---
 function updateSettingsUI(cfg) {
@@ -2476,7 +2637,7 @@ if (el("btn-reset-config")) {
     if (!invoke) return;
     const confirmed = await showConfirmDialog(
       "Reset All Settings",
-      "This will reset ALL settings to their default values. This cannot be undone. Continue?"
+      "This will reset all OxideLink settings to their default values. Your profiles and calibration data will be preserved."
     );
     if (!confirmed) return;
     try {
@@ -2679,7 +2840,7 @@ async function loadProfiles() {
   if (!invoke) return;
   try {
     profilesCache = await invoke("list_profiles");
-    renderProfileList();
+    renderProfileCards(profilesCache);
     const active = await invoke("get_active_profile");
     updateProfileIndicator(active?.id, active?.name);
     const auto = await invoke("get_auto_switch_enabled");
@@ -2690,16 +2851,66 @@ async function loadProfiles() {
   }
 }
 
-function renderProfileList() {
-  const list = el("profile-list");
-  if (!list) return;
-  list.innerHTML = "";
-  profilesCache.forEach((p) => {
-    const opt = document.createElement("option");
-    opt.value = p.id;
-    opt.textContent = (p.enabled ? "" : "[OFF] ") + p.name;
-    if (p.id === selectedProfileId) opt.selected = true;
-    list.appendChild(opt);
+function renderProfileCards(profiles, activeProfileName) {
+  const grid = document.getElementById('profile-cards-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+
+  if (!profiles || profiles.length === 0) {
+    const empty = document.getElementById('profiles-empty');
+    if (empty) empty.hidden = false;
+    return;
+  }
+
+  const empty = document.getElementById('profiles-empty');
+  if (empty) empty.hidden = true;
+
+  profiles.forEach(profile => {
+    const card = document.createElement('div');
+    card.className = 'profile-card' + (profile.id === selectedProfileId ? ' active' : '');
+    card.setAttribute('role', 'option');
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('aria-selected', profile.id === selectedProfileId ? 'true' : 'false');
+    card.dataset.profileId = profile.id;
+    card.dataset.profileName = profile.name;
+    const ruleCount = profile.auto_rules ? profile.auto_rules.length : 0;
+    card.innerHTML = `
+      ${profile.id === selectedProfileId ? '<span class="profile-card-badge">SELECTED</span>' : ''}
+      <div class="profile-card-name">${escapeHtml((profile.enabled ? "" : "[OFF] ") + profile.name)}</div>
+      <div class="profile-card-meta">${ruleCount > 0 ? ruleCount + ' rules' : 'No rules'}</div>
+    `;
+    // Single-click to select, double-click to activate
+    card.addEventListener('click', () => {
+      // Select this profile (update any selection state)
+      document.querySelectorAll('.profile-card').forEach(c => {
+        c.classList.remove('active');
+        c.setAttribute('aria-selected', 'false');
+      });
+      card.classList.add('active');
+      card.setAttribute('aria-selected', 'true');
+      const badge = card.querySelector('.profile-card-badge');
+      if (!badge) {
+        const b = document.createElement('span');
+        b.className = 'profile-card-badge';
+        b.textContent = 'SELECTED';
+        card.insertBefore(b, card.firstChild);
+      }
+      selectedProfileId = profile.id;
+      // Update the profile name field if it exists
+      const nameInput = document.getElementById('profile-name');
+      if (nameInput) nameInput.value = profile.name;
+      renderProfileEditor(profile);
+    });
+    card.addEventListener('dblclick', () => {
+      // Set as active
+      setActiveFromSelection();
+    });
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        card.click();
+      }
+    });
+    grid.appendChild(card);
   });
 }
 
@@ -2774,16 +2985,14 @@ function renderRules() {
 }
 
 function getSelectedProfile() {
-  const list = el("profile-list");
-  if (!list || list.selectedIndex < 0) return null;
-  const id = list.value;
-  return profilesCache.find((p) => p.id === id) || null;
+  if (!selectedProfileId) return null;
+  return profilesCache.find((p) => p.id === selectedProfileId) || null;
 }
 
 async function saveProfile() {
   if (!invoke) return;
   const name = el("profile-name").value.trim();
-  if (!name) return appendLog("[ERR] Profile name required", "warn-line");
+  if (!name) { appendLog("[ERR] Profile name required", "warn-line"); showToast("Profile name required", "error"); return; }
   const enabled = el("profile-enabled").checked;
   const profile = getSelectedProfile();
   try {
@@ -2791,13 +3000,16 @@ async function saveProfile() {
       const updated = { ...profile, name, enabled, auto_rules: editingRules, updated_at: Date.now() };
       await invoke("update_profile", { profile: updated });
       appendLog("[PROF] Profile updated", "hid-line");
+      showToast("Profile updated", "success");
     } else {
       await invoke("create_profile", { name, auto_rules: editingRules });
       appendLog("[PROF] Profile created", "hid-line");
+      showToast("Profile created", "success");
     }
     await loadProfiles();
   } catch (e) {
     appendLog("[ERR] saveProfile: " + e, "warn-line");
+    showToast("Failed to save profile: " + e, "error");
   }
 }
 
@@ -2805,14 +3017,21 @@ async function deleteProfile() {
   if (!invoke) return;
   const profile = getSelectedProfile();
   if (!profile) return;
+  const confirmed = await showConfirmDialog(
+    "Delete Profile",
+    "This will permanently delete the selected profile. This cannot be undone."
+  );
+  if (!confirmed) return;
   try {
     await invoke("delete_profile", { id: profile.id });
     selectedProfileId = null;
     renderProfileEditor(null);
     await loadProfiles();
     appendLog("[PROF] Profile deleted", "hid-line");
+    showToast("Profile deleted", "success");
   } catch (e) {
     appendLog("[ERR] deleteProfile: " + e, "warn-line");
+    showToast("Failed to delete profile: " + e, "error");
   }
 }
 
@@ -2822,8 +3041,10 @@ async function setActiveFromSelection() {
   try {
     await invoke("set_active_profile", { id: profile ? profile.id : null });
     appendLog("[PROF] Active profile set", "hid-line");
+    showToast("Active profile set", "success");
   } catch (e) {
     appendLog("[ERR] setActiveFromSelection: " + e, "warn-line");
+    showToast("Failed to set active profile: " + e, "error");
   }
 }
 
@@ -2857,31 +3078,54 @@ async function importProfiles() {
   try {
     const list = await invoke("import_profiles", { path });
     profilesCache = list;
-    renderProfileList();
+    renderProfileCards(profilesCache);
     appendLog("[PROF] Imported " + list.length + " profiles", "hid-line");
   } catch (e) {
     appendLog("[ERR] importProfiles: " + e, "warn-line");
   }
 }
 
-el("profile-list")?.addEventListener("change", () => {
-  const profile = getSelectedProfile();
-  selectedProfileId = profile?.id || null;
-  renderProfileEditor(profile);
-});
-
 el("btn-new-profile")?.addEventListener("click", () => {
   selectedProfileId = null;
-  el("profile-list").selectedIndex = -1;
+  document.querySelectorAll('.profile-card').forEach(c => {
+    c.classList.remove('active');
+    c.setAttribute('aria-selected', 'false');
+    const badge = c.querySelector('.profile-card-badge');
+    if (badge) badge.remove();
+  });
   renderProfileEditor(null);
 });
 
-el("btn-save-profile")?.addEventListener("click", saveProfile);
+el("btn-save-profile")?.addEventListener("click", async () => {
+  const btn = el("btn-save-profile");
+  setButtonLoading(btn, true);
+  try {
+    await saveProfile();
+  } finally {
+    setButtonLoading(btn, false);
+  }
+});
 el("btn-cancel-profile")?.addEventListener("click", () => {
   renderProfileEditor(getSelectedProfile());
 });
-el("btn-delete-profile")?.addEventListener("click", deleteProfile);
-el("btn-set-active")?.addEventListener("click", setActiveFromSelection);
+el("btn-delete-profile")?.addEventListener("click", async () => {
+  const btn = el("btn-delete-profile");
+  setButtonLoading(btn, true);
+  try {
+    await deleteProfile();
+  } finally {
+    setButtonLoading(btn, false);
+  }
+});
+el("btn-set-active")?.addEventListener("click", async () => {
+  const btn = el("btn-set-active");
+  setButtonLoading(btn, true);
+  try {
+    await setActiveFromSelection();
+  } finally {
+    setButtonLoading(btn, false);
+  }
+});
 el("auto-switch-toggle")?.addEventListener("change", toggleAutoSwitch);
 el("btn-add-rule")?.addEventListener("click", () => {
   editingRules.push({
@@ -2955,21 +3199,127 @@ function buildMacroStep() {
   return null;
 }
 
+function renderMacroTimeline(steps) {
+  const track = document.getElementById('timeline-track');
+  if (!track) return;
+  track.innerHTML = '';
+  if (!steps || steps.length === 0) return;
+
+  // Calculate total duration
+  let totalMs = 0;
+  steps.forEach(s => {
+    if (s.type === 'wait' || s.type === 'wait_ms' || s.type === 'delay') totalMs += (s.value || 0);
+    else totalMs += 50; // Assume 50ms for non-wait steps
+  });
+  totalMs = Math.max(totalMs, 1000); // Min 1 second
+
+  let offset = 0;
+  steps.forEach((s, i) => {
+    const duration = (s.type === 'wait' || s.type === 'wait_ms' || s.type === 'delay') ? (s.value || 0) : 50;
+    const step = document.createElement('div');
+    step.className = 'timeline-step';
+    step.style.left = (offset / totalMs * 100) + '%';
+    step.style.width = (duration / totalMs * 100) + '%';
+    step.dataset.stepId = i;
+    const label = document.createElement('span');
+    label.className = 'timeline-label';
+    let labelText = s.type;
+    if (s.type === 'wait_ms' || s.type === 'wait' || s.type === 'delay') labelText += ' ' + s.value;
+    else if (Array.isArray(s.value)) labelText += ' ' + s.value.join(',');
+    else if (s.value !== undefined && s.value !== null) labelText += ' ' + s.value;
+    label.textContent = labelText;
+    step.appendChild(label);
+    track.appendChild(step);
+    offset += duration;
+  });
+}
+
 function renderMacroSteps() {
   const list = el("macro-steps");
   if (!list) return;
   list.innerHTML = "";
   macroSteps.forEach((s, idx) => {
     const li = document.createElement("li");
-    li.textContent = JSON.stringify(s);
+    li.classList.add("macro-step");
+    li.setAttribute("draggable", "true");
+    li.dataset.stepData = JSON.stringify(s);
+    li.dataset.stepIndex = idx;
+    const handle = document.createElement("span");
+    handle.className = "step-drag-handle";
+    handle.textContent = "⋮⋮";
+    li.appendChild(handle);
+    const text = document.createElement("span");
+    text.textContent = JSON.stringify(s);
+    li.appendChild(text);
     li.title = "Click to remove";
     li.style.cursor = "pointer";
-    li.addEventListener("click", () => {
+    li.addEventListener("click", (e) => {
+      // Don't remove when clicking the drag handle
+      if (e.target.closest('.step-drag-handle')) return;
       macroSteps.splice(idx, 1);
       renderMacroSteps();
     });
     list.appendChild(li);
   });
+  renderMacroTimeline(macroSteps);
+}
+
+// Enable drag-to-reorder on macro steps
+function enableStepDragReorder() {
+  const stepsList = document.getElementById('macro-steps');
+  if (!stepsList) return;
+
+  let draggedStep = null;
+
+  stepsList.addEventListener('dragstart', (e) => {
+    const li = e.target.closest('.macro-step');
+    if (!li) return;
+    draggedStep = li;
+    li.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  });
+
+  stepsList.addEventListener('dragend', (e) => {
+    const li = e.target.closest('.macro-step');
+    if (li) li.classList.remove('dragging');
+    draggedStep = null;
+  });
+
+  stepsList.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const afterElement = getDragAfterElement(stepsList, e.clientY);
+    if (draggedStep && afterElement) {
+      stepsList.insertBefore(draggedStep, afterElement);
+    } else if (draggedStep) {
+      stepsList.appendChild(draggedStep);
+    }
+  });
+
+  stepsList.addEventListener('drop', (e) => {
+    e.preventDefault();
+    // Re-read the step order and update the underlying data
+    const steps = [];
+    stepsList.querySelectorAll('.macro-step').forEach(li => {
+      steps.push(li.dataset.stepData ? JSON.parse(li.dataset.stepData) : {});
+    });
+    // Update the macro's steps array and re-render
+    macroSteps = steps;
+    renderMacroSteps();
+    renderMacroTimeline(macroSteps);
+  });
+}
+
+function getDragAfterElement(container, y) {
+  const draggableElements = [...container.querySelectorAll('.macro-step:not(.dragging)')];
+  return draggableElements.reduce((closest, child) => {
+    const box = child.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    if (offset < 0 && offset > closest.offset) {
+      return { offset: offset, element: child };
+    }
+    return closest;
+  }, { offset: Number.NEGATIVE_INFINITY }).element;
 }
 
 function updateMacroStatus(text) {
@@ -3133,6 +3483,7 @@ el("btn-macro-delete")?.addEventListener("click", deleteMacro);
 el("btn-macro-play")?.addEventListener("click", playMacro);
 el("btn-macro-stop")?.addEventListener("click", stopMacro);
 el("btn-macro-record")?.addEventListener("click", recordStart);
+enableStepDragReorder();
 el("btn-macro-stop")?.addEventListener("click", recordStop);
 
 // =============================================================================
@@ -3210,20 +3561,33 @@ function drawCurveEditor() {
   ctx.stroke();
   ctx.shadowColor = "rgba(120,200,255,0.5)"; ctx.shadowBlur = 6; ctx.stroke(); ctx.shadowBlur = 0;
 
-  // Bezier control points + handles
+  // Bezier control points + handles (P2.9 — enhanced visibility)
   if (type === "bezier") {
     const pts = [[0, 0], p1, p2, [1, 1]];
+    // Control point connecting lines
     ctx.strokeStyle = "rgba(255,200,120,0.4)"; ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(0, h); ctx.lineTo(p1[0] * w, h - p1[1] * h);
     ctx.moveTo(w, 0); ctx.lineTo(p2[0] * w, h - p2[1] * h);
     ctx.stroke();
+    // Endpoint handles (0,0) and (1,1) — small fixed dots
+    [[0, 0], [1, 1]].forEach((p) => {
+      const px = p[0] * w, py = h - p[1] * h;
+      ctx.fillStyle = "rgba(120,200,255,0.3)";
+      ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "#78c8ff"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2); ctx.stroke();
+    });
+    // Draggable control point handles (p1, p2) — larger, more visible
     pts.slice(1, 3).forEach((p) => {
       const px = p[0] * w, py = h - p[1] * h;
-      ctx.fillStyle = "#ffc878";
-      ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = "rgba(255,200,120,0.6)"; ctx.lineWidth = 1.5;
+      ctx.fillStyle = "rgba(120,200,255,0.3)";
+      ctx.beginPath(); ctx.arc(px, py, 8, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "#78c8ff"; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(px, py, 8, 0, Math.PI * 2); ctx.stroke();
+      // Inner dot for visibility
+      ctx.fillStyle = "#78c8ff";
+      ctx.beginPath(); ctx.arc(px, py, 3, 0, Math.PI * 2); ctx.fill();
     });
   }
 
@@ -3531,13 +3895,16 @@ ZONE_FIELDS.forEach((id, idx) => {
   });
 });
 
-// Curve preset buttons
+// Curve preset buttons (P2.10 — active indicator)
 document.querySelectorAll("[data-curve-preset]").forEach((btn) => {
   btn.addEventListener("click", () => {
     const preset = btn.dataset.curvePreset;
     el("curve-type").value = preset;
     if (preset === "exponential" && btn.dataset.power) el("curve-power").value = btn.dataset.power;
     showCurveFields();
+    // Update active state on all curve preset buttons
+    document.querySelectorAll("[data-curve-preset]").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
   });
 });
 
@@ -3603,44 +3970,34 @@ el("btn-kbm-test-up")?.addEventListener("click", () => testKbmKey(false));
 // HidHide tab
 // =============================================================================
 function updateHidHideTabUI(status) {
-  if (!status) return;
-  setText("hidhide-tab-installed", status.installed ? "Yes" : "No");
-  setText("hidhide-tab-hidden", status.hidden ? "Yes" : "No");
-  setText("hidhide-tab-path", status.device_path || "—");
-  setText("hidhide-tab-message", status.message || "");
-  const t = el("hidhide-tab-enabled");
-  if (t && status.enabled !== undefined && document.activeElement !== t) t.checked = status.enabled;
+  // Delegate to the settings-section HidHide UI updater (merged from tab).
+  updateHidHideUI(status);
 }
 
 async function refreshHidHideTabStatus() {
-  if (!invoke) return;
-  try {
-    const status = await invoke("hidhide_get_status");
-    updateHidHideTabUI(status);
-  } catch (e) {
-    appendLog("[ERR] hidhide_get_status: " + e, "warn-line");
-  }
+  // Delegate to the settings-section HidHide refresher (merged from tab).
+  refreshHidHideStatus();
 }
 
 async function setHidHideTabEnabled(enabled) {
   if (!invoke) return;
   try {
     const status = await invoke("hidhide_set_enabled", { enabled });
-    updateHidHideTabUI(status);
+    updateHidHideUI(status);
     if (currentConfig) {
       currentConfig.hidhide_enabled = enabled;
       await pushConfig(currentConfig);
     }
   } catch (e) {
     appendLog("[ERR] hidhide_set_enabled: " + e, "warn-line");
-    el("hidhide-tab-enabled").checked = !enabled;
+    const t = el("cfg-hidhide-enabled");
+    if (t) t.checked = !enabled;
   }
 }
 
 el("btn-hidhide-refresh")?.addEventListener("click", refreshHidHideTabStatus);
 el("btn-hidhide-hide")?.addEventListener("click", () => setHidHideTabEnabled(true));
 el("btn-hidhide-unhide")?.addEventListener("click", () => setHidHideTabEnabled(false));
-el("hidhide-tab-enabled")?.addEventListener("change", (e) => setHidHideTabEnabled(e.target.checked));
 
 // =============================================================================
 // Logging tab (reuses appLogs)
@@ -3906,8 +4263,10 @@ async function dsuStart() {
     const ok = await invoke("dsu_start");
     appendLog("[DSU] Start: " + ok, "hid-line");
     await refreshDsuStatus();
+    showToast("DSU server started", "success");
   } catch (e) {
     appendLog("[ERR] dsu_start: " + e, "warn-line");
+    showToast("DSU start failed: " + e, "error");
   }
 }
 
@@ -3917,13 +4276,31 @@ async function dsuStop() {
     const ok = await invoke("dsu_stop");
     appendLog("[DSU] Stop: " + ok, "hid-line");
     await refreshDsuStatus();
+    showToast("DSU server stopped", "success");
   } catch (e) {
     appendLog("[ERR] dsu_stop: " + e, "warn-line");
+    showToast("DSU stop failed: " + e, "error");
   }
 }
 
-el("btn-dsu-start")?.addEventListener("click", dsuStart);
-el("btn-dsu-stop")?.addEventListener("click", dsuStop);
+el("btn-dsu-start")?.addEventListener("click", async () => {
+  const btn = el("btn-dsu-start");
+  setButtonLoading(btn, true);
+  try {
+    await dsuStart();
+  } finally {
+    setButtonLoading(btn, false);
+  }
+});
+el("btn-dsu-stop")?.addEventListener("click", async () => {
+  const btn = el("btn-dsu-stop");
+  setButtonLoading(btn, true);
+  try {
+    await dsuStop();
+  } finally {
+    setButtonLoading(btn, false);
+  }
+});
 el("btn-dsu-status")?.addEventListener("click", refreshDsuStatus);
 
 // =============================================================================
@@ -3973,6 +4350,17 @@ function drawFlickDiagram() {
   // Center dot
   ctx.fillStyle = "#78c8ff";
   ctx.beginPath(); ctx.arc(cx, cy, 3, 0, Math.PI * 2); ctx.fill();
+
+  // Live stick position dot (P2.8) — drawn from the latest controller telemetry
+  if (typeof currentStickX !== 'undefined' && typeof currentStickY !== 'undefined') {
+    const radius = Math.min(cx, cy) * 0.85;
+    const px = cx + currentStickX * radius;
+    const py = cy - currentStickY * radius; // invert y (canvas y grows down)
+    ctx.beginPath();
+    ctx.arc(px, py, 4, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(120,200,255,0.9)';
+    ctx.fill();
+  }
 
   // Labels
   ctx.fillStyle = "rgba(138,150,168,0.7)"; ctx.font = "9px Cascadia Code, monospace";
@@ -4035,6 +4423,28 @@ el("btn-flick-reset-yaw")?.addEventListener("click", resetFlickYaw);
 ["flick-threshold", "flick-deadzone"].forEach((id) => {
   el(id)?.addEventListener("input", drawFlickDiagram);
 });
+// Flick slider live values (P2.4)
+const flickThreshold = document.getElementById('flick-threshold');
+const flickDeadzone = document.getElementById('flick-deadzone');
+const flickSmoothing = document.getElementById('flick-smoothing');
+if (flickThreshold) {
+  flickThreshold.addEventListener('input', () => {
+    const val = document.getElementById('flick-threshold-val');
+    if (val) val.textContent = parseFloat(flickThreshold.value).toFixed(2);
+  });
+}
+if (flickDeadzone) {
+  flickDeadzone.addEventListener('input', () => {
+    const val = document.getElementById('flick-deadzone-val');
+    if (val) val.textContent = parseFloat(flickDeadzone.value).toFixed(2);
+  });
+}
+if (flickSmoothing) {
+  flickSmoothing.addEventListener('input', () => {
+    const val = document.getElementById('flick-smoothing-val');
+    if (val) val.textContent = parseFloat(flickSmoothing.value).toFixed(2);
+  });
+}
 drawFlickDiagram();
 
 // =============================================================================
@@ -4102,14 +4512,16 @@ async function nfcSetEnabled(enabled) {
 async function loadAmiibo() {
   if (!invoke) return;
   const path = el("nfc-amiibo-path")?.value?.trim();
-  if (!path) { setNfcStatus("Enter a .bin path first", "err"); return; }
+  if (!path) { setNfcStatus("Enter a .bin path first", "err"); showToast("Enter a .bin path first", "error"); return; }
   try {
     const state = await invoke("load_amiibo_bin", { path });
     renderNfcAmiiboInfo(state);
     setNfcStatus("Amiibo loaded from " + path.split(/[\\/]/).pop(), "ok");
+    showToast("Amiibo loaded from " + path.split(/[\\/]/).pop(), "success");
   } catch (e) {
     appendLog("[ERR] load_amiibo_bin: " + e, "warn-line");
     setNfcStatus("Load failed: " + e, "err");
+    showToast("Amiibo load failed: " + e, "error");
   }
 }
 
@@ -4129,8 +4541,41 @@ async function emulateAmiibo() {
 
 el("nfc-tab-enabled")?.addEventListener("change", (e) => nfcSetEnabled(e.target.checked));
 el("btn-nfc-get-state")?.addEventListener("click", nfcGetState);
-el("btn-load-amiibo")?.addEventListener("click", loadAmiibo);
+el("btn-load-amiibo")?.addEventListener("click", async () => {
+  const btn = el("btn-load-amiibo");
+  setButtonLoading(btn, true);
+  try {
+    await loadAmiibo();
+  } finally {
+    setButtonLoading(btn, false);
+  }
+});
 el("btn-emulate-amiibo")?.addEventListener("click", emulateAmiibo);
+
+// NFC file picker (P2.6) — browse for .bin/.dat amiibo files
+const btnNfcBrowse = document.getElementById('btn-nfc-browse');
+if (btnNfcBrowse) {
+  btnNfcBrowse.addEventListener('click', async () => {
+    // Use a hidden file input to trigger the file dialog
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.bin,.dat';
+    fileInput.onchange = (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        const pathInput = document.getElementById('nfc-amiibo-path');
+        if (pathInput) {
+          // Browsers can't get the full path, use the file name
+          // The backend will handle the actual file reading
+          pathInput.value = file.name;
+          pathInput.dataset.fileObj = file.name;
+        }
+        showToast('File selected: ' + file.name, 'info');
+      }
+    };
+    fileInput.click();
+  });
+}
 
 // =============================================================================
 // Updater tab
@@ -4162,12 +4607,15 @@ async function checkForUpdates() {
     const info = await invoke("check_for_updates");
     if (info) {
       setText("updater-status", `v${info.version} available`);
+      showToast("Update available: v" + info.version, "info");
     } else {
       setText("updater-status", "No update available");
+      showToast("No update available", "info");
     }
   } catch (e) {
     setText("updater-status", "Check failed");
     appendLog("[ERR] check_for_updates: " + e, "warn-line");
+    showToast("Update check failed: " + e, "error");
   }
 }
 
@@ -4177,16 +4625,34 @@ async function installUpdate() {
   try {
     const ok = await invoke("download_and_install_update");
     setText("updater-status", ok ? "Installed" : "No update");
+    showToast(ok ? "Update installed" : "No update to install", ok ? "success" : "info");
   } catch (e) {
     setText("updater-status", "Install failed");
     appendLog("[ERR] download_and_install_update: " + e, "warn-line");
+    showToast("Install failed: " + e, "error");
   }
 }
 
 el("btn-update-get-endpoint")?.addEventListener("click", getUpdateEndpoint);
 el("btn-update-set-endpoint")?.addEventListener("click", setUpdateEndpoint);
-el("btn-check-update")?.addEventListener("click", checkForUpdates);
-el("btn-install-update")?.addEventListener("click", installUpdate);
+el("btn-check-update")?.addEventListener("click", async () => {
+  const btn = el("btn-check-update");
+  setButtonLoading(btn, true);
+  try {
+    await checkForUpdates();
+  } finally {
+    setButtonLoading(btn, false);
+  }
+});
+el("btn-install-update")?.addEventListener("click", async () => {
+  const btn = el("btn-install-update");
+  setButtonLoading(btn, true);
+  try {
+    await installUpdate();
+  } finally {
+    setButtonLoading(btn, false);
+  }
+});
 
 // =============================================================================
 // Telemetry / Privacy tab
@@ -4457,6 +4923,34 @@ el("btn-overlay-toggle")?.addEventListener("click", toggleOverlay);
   el(id)?.addEventListener("input", drawOverlayPreview);
   el(id)?.addEventListener("change", drawOverlayPreview);
 });
+// Overlay slider live values (P2.5)
+const overlayOpacity = document.getElementById('overlay-opacity');
+const overlayScale = document.getElementById('overlay-scale');
+if (overlayOpacity) {
+  overlayOpacity.addEventListener('input', () => {
+    const val = document.getElementById('overlay-opacity-val');
+    if (val) val.textContent = parseFloat(overlayOpacity.value).toFixed(2);
+  });
+}
+if (overlayScale) {
+  overlayScale.addEventListener('input', () => {
+    const val = document.getElementById('overlay-scale-val');
+    if (val) val.textContent = parseFloat(overlayScale.value).toFixed(2);
+  });
+}
+// Overlay live preview - re-render on any control change (P2.7)
+const overlayControls = ['overlay-hotkey', 'overlay-opacity', 'overlay-scale', 'overlay-position', 'overlay-show-battery', 'overlay-show-profile', 'overlay-show-fps'];
+overlayControls.forEach(id => {
+  const elCtrl = document.getElementById(id);
+  if (elCtrl) {
+    elCtrl.addEventListener('input', () => {
+      if (typeof drawOverlayPreview === 'function') drawOverlayPreview();
+    });
+    elCtrl.addEventListener('change', () => {
+      if (typeof drawOverlayPreview === 'function') drawOverlayPreview();
+    });
+  }
+});
 
 // =============================================================================
 // Cloud
@@ -4492,6 +4986,41 @@ async function saveCloud() {
 }
 
 let cloudProfileCache = [];
+
+function showCloudProfilePreview(profile) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);z-index:10000;display:flex;align-items:center;justify-content:center;';
+
+  const modal = document.createElement('div');
+  modal.className = 'glass panel';
+  modal.style.cssText = 'max-width:420px;width:90%;padding:24px;border-radius:18px;';
+  const rating = Math.round(profile.rating || 0);
+  modal.innerHTML = `
+    <h2 class="panel-title">${escapeHtml(profile.name || 'Profile Preview')}</h2>
+    <div style="margin:16px 0;">
+      <p style="color:var(--text-dim);font-size:13px;margin:4px 0;">Author: ${escapeHtml(profile.author || 'Unknown')}</p>
+      <p style="color:var(--text-dim);font-size:13px;margin:4px 0;">Tags: ${escapeHtml((profile.tags || []).join(', ') || 'None')}</p>
+      <p style="color:var(--text-dim);font-size:13px;margin:4px 0;">Downloads: ${profile.downloads || 0}</p>
+      <p style="color:var(--text-dim);font-size:13px;margin:4px 0;">Rating: ${'★'.repeat(rating)}${'☆'.repeat(5 - rating)}</p>
+      ${profile.description ? `<p style="color:var(--text-dim);font-size:13px;margin:8px 0;">${escapeHtml(profile.description)}</p>` : ''}
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button class="btn btn-secondary" id="preview-close">Close</button>
+      <button class="btn" id="preview-download">Download</button>
+    </div>
+  `;
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const close = () => { if (overlay.parentNode) document.body.removeChild(overlay); };
+  modal.querySelector('#preview-close').addEventListener('click', close);
+  modal.querySelector('#preview-download').addEventListener('click', () => {
+    close();
+    downloadProfileById(profile.id, profile.name);
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+}
 
 function renderCloudProfileCards(profiles, filter) {
   const list = el("cloud-list");
@@ -4534,8 +5063,14 @@ function renderCloudProfileCards(profiles, filter) {
       </div>
     `;
     card.querySelector("[data-dl]")?.addEventListener("click", (e) => {
+      e.stopPropagation();
       const id = e.target.getAttribute("data-dl");
       downloadProfileById(id, p.name);
+    });
+    // Click on card (not the download button) opens preview modal
+    card.addEventListener("click", (e) => {
+      if (e.target.closest("[data-dl]")) return;
+      showCloudProfilePreview(p);
     });
     list.appendChild(card);
   });
@@ -4569,12 +5104,15 @@ async function uploadActiveProfile() {
     const profile = await invoke("get_active_profile");
     if (!profile) {
       appendLog("[CLOUD] No active profile to upload", "warn-line");
+      showToast("No active profile to upload", "error");
       return;
     }
     const code = await invoke("upload_profile", { profile });
     appendLog("[CLOUD] Uploaded, share code: " + code, "hid-line");
+    showToast("Profile uploaded, share code: " + code, "success");
   } catch (e) {
     handleError("uploadActiveProfile failed", e);
+    showToast("Upload failed: " + e, "error");
   }
 }
 
@@ -4585,16 +5123,34 @@ async function downloadByCode() {
     if (!code) return;
     const profile = await invoke("get_profile_by_code", { code });
     appendLog("[CLOUD] Downloaded " + (profile?.name || code), "hid-line");
+    showToast("Profile downloaded: " + (profile?.name || code), "success");
   } catch (e) {
     handleError("downloadByCode failed", e);
+    showToast("Download failed: " + e, "error");
   }
 }
 
 el("btn-cloud-load")?.addEventListener("click", loadCloud);
 el("btn-cloud-save")?.addEventListener("click", saveCloud);
 el("btn-cloud-list")?.addEventListener("click", listCommunityProfiles);
-el("btn-cloud-upload")?.addEventListener("click", uploadActiveProfile);
-el("btn-cloud-download")?.addEventListener("click", downloadByCode);
+el("btn-cloud-upload")?.addEventListener("click", async () => {
+  const btn = el("btn-cloud-upload");
+  setButtonLoading(btn, true);
+  try {
+    await uploadActiveProfile();
+  } finally {
+    setButtonLoading(btn, false);
+  }
+});
+el("btn-cloud-download")?.addEventListener("click", async () => {
+  const btn = el("btn-cloud-download");
+  setButtonLoading(btn, true);
+  try {
+    await downloadByCode();
+  } finally {
+    setButtonLoading(btn, false);
+  }
+});
 el("cloud-search")?.addEventListener("input", (e) => {
   renderCloudProfileCards(cloudProfileCache, e.target.value);
 });
@@ -4603,16 +5159,11 @@ el("cloud-search")?.addEventListener("input", (e) => {
 function onTabActivated(tab) {
   if (tab === "macros") loadMacros();
   if (tab === "curves") { loadCurve(); loadZones(); }
-  if (tab === "kbm") loadKbm();
-  if (tab === "hidhide") refreshHidHideTabStatus();
+  if (tab === "imu") refreshDsuStatus();
   if (tab === "logging") { refreshLoggingLogs(); }
-  if (tab === "tray") loadTrayTab();
   if (tab === "multi") loadControllers();
-  if (tab === "dsu") refreshDsuStatus();
   if (tab === "flick") loadFlick();
   if (tab === "nfc") nfcGetState();
-  if (tab === "updater") getUpdateEndpoint();
-  if (tab === "telemetry") { loadTelemetry(); loadCrashReporting(); }
   if (tab === "overlay") loadOverlay();
   if (tab === "cloud") loadCloud();
 }
@@ -4659,5 +5210,211 @@ if (el("btn-bt-reconnect")) {
     } catch (err) {
       appendLog("[ERR] trigger_bt_reconnect failed: " + err, "warn-line");
     }
+  });
+}
+
+// ===== Global Keyboard Shortcuts (P4.1) =====
+document.addEventListener('keydown', (e) => {
+  // Don't trigger shortcuts when typing in an input/textarea
+  const tag = e.target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (e.target.isContentEditable) return;
+
+  // Ctrl+, → Open Settings tab
+  if (e.ctrlKey && e.key === ',') {
+    e.preventDefault();
+    const settingsTab = document.querySelector('[data-tab="settings"]');
+    if (settingsTab) settingsTab.click();
+    return;
+  }
+
+  // Ctrl+L → Open Logging tab (if it still exists)
+  if (e.ctrlKey && e.key === 'l' && !e.shiftKey) {
+    e.preventDefault();
+    const loggingTab = document.querySelector('[data-tab="logging"]');
+    if (loggingTab) loggingTab.click();
+    return;
+  }
+
+  // Ctrl+R → Toggle macro recording (if macro tab is relevant)
+  if (e.ctrlKey && e.key === 'r' && !e.shiftKey) {
+    e.preventDefault();
+    const recordBtn = document.getElementById('btn-macro-record');
+    if (recordBtn && !recordBtn.disabled) recordBtn.click();
+    return;
+  }
+
+  // Ctrl+D → Toggle DSU server
+  if (e.ctrlKey && e.key === 'd' && !e.shiftKey) {
+    e.preventDefault();
+    const dsuStatus = document.getElementById('dsu-status');
+    if (dsuStatus) {
+      if (dsuStatus.textContent.includes('Running') || dsuStatus.textContent.includes('running')) {
+        const stopBtn = document.getElementById('btn-dsu-stop');
+        if (stopBtn) stopBtn.click();
+      } else {
+        const startBtn = document.getElementById('btn-dsu-start');
+        if (startBtn) startBtn.click();
+      }
+    }
+    return;
+  }
+
+  // Ctrl+M → Open Macros tab
+  if (e.ctrlKey && e.key === 'm' && !e.shiftKey) {
+    e.preventDefault();
+    const macroTab = document.querySelector('[data-tab="macros"]');
+    if (macroTab) macroTab.click();
+    return;
+  }
+
+  // Ctrl+P → Open Profiles tab
+  if (e.ctrlKey && e.key === 'p' && !e.shiftKey) {
+    e.preventDefault();
+    const profileTab = document.querySelector('[data-tab="profiles"]');
+    if (profileTab) profileTab.click();
+    return;
+  }
+
+  // Escape → Close any open modal overlay
+  if (e.key === 'Escape') {
+    const modal = document.querySelector('.modal-overlay');
+    if (modal) {
+      modal.click(); // Click the overlay to trigger close
+      return;
+    }
+  }
+
+  // ? → Show keyboard shortcut help
+  if (e.key === '?' && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    showShortcutHelp();
+    return;
+  }
+});
+
+function showShortcutHelp() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px);z-index:10000;display:flex;align-items:center;justify-content:center;';
+
+  const modal = document.createElement('div');
+  modal.className = 'glass panel';
+  modal.style.cssText = 'max-width:400px;width:90%;padding:24px;border-radius:18px;';
+  modal.innerHTML = `
+    <h2 class="panel-title">Keyboard Shortcuts</h2>
+    <div style="margin:16px 0;font-size:13px;color:var(--text-dim);line-height:1.8;">
+      <div><kbd>Ctrl + ,</kbd> — Open Settings</div>
+      <div><kbd>Ctrl + M</kbd> — Open Macros</div>
+      <div><kbd>Ctrl + P</kbd> — Open Profiles</div>
+      <div><kbd>Ctrl + L</kbd> — Open Logging</div>
+      <div><kbd>Ctrl + R</kbd> — Toggle Macro Recording</div>
+      <div><kbd>Ctrl + D</kbd> — Toggle DSU Server</div>
+      <div><kbd>?</kbd> — Show this help</div>
+      <div><kbd>Esc</kbd> — Close dialogs</div>
+      <div><kbd>← →</kbd> — Navigate tabs</div>
+    </div>
+    <div style="text-align:right;">
+      <button class="btn" id="shortcut-close">Close</button>
+    </div>
+  `;
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const close = () => document.body.removeChild(overlay);
+  modal.querySelector('#shortcut-close').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+}
+
+// ===== Contextual Help Tooltips (P4.4) =====
+function injectHelpTooltips() {
+  const tooltips = [
+    { id: 'kbm-anti-cheat', text: 'Enable for games with anti-cheat that blocks virtual input' },
+    { id: 'kbm-mouse-sens', text: 'Mouse sensitivity multiplier (0.1-10.0, 1.0 = default)' },
+    { id: 'flick-threshold', text: 'Stick deflection needed to trigger a flick (0-1)' },
+    { id: 'flick-deadzone', text: 'Ignore stick input below this threshold (0-1)' },
+    { id: 'flick-rotate-rate', text: 'Rotation speed when flicking (degrees per second)' },
+    { id: 'overlay-opacity', text: 'Overlay transparency (0=invisible, 1=fully visible)' },
+    { id: 'overlay-scale', text: 'Overlay size multiplier (1.0 = normal)' },
+    { id: 'overlay-hotkey', text: 'Keyboard shortcut to toggle overlay visibility' },
+    { id: 'dsu-bind-address', text: '127.0.0.1 = local only, 0.0.0.0 = all networks' },
+    { id: 'dsu-port', text: 'Default: 26760 (Cemuhook standard)' },
+    { id: 'dsu-rate', text: 'Update rate in Hz (60-120 recommended)' },
+    { id: 'zone-deadzone', text: 'Stick input below this is ignored' },
+    { id: 'zone-low', text: 'Low sensitivity zone threshold' },
+    { id: 'zone-medium', text: 'Medium sensitivity zone threshold' },
+    { id: 'zone-high', text: 'High sensitivity zone threshold' },
+    { id: 'response-curve-power', text: 'Exponential curve power (higher = more aggressive)' },
+    { id: 'gyro-sensitivity', text: 'Gyroscope sensitivity multiplier' },
+    { id: 'home-brightness', text: 'Home button light brightness (0-100%)' },
+  ];
+
+  tooltips.forEach(({ id, text }) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+
+    // Find the label associated with this element
+    const label = document.querySelector(`label[for="${id}"]`);
+    const target = label || el.parentElement;
+    if (!target) return;
+
+    // Create tooltip icon
+    const tooltip = document.createElement('span');
+    tooltip.className = 'help-tooltip';
+    tooltip.textContent = '?';
+    tooltip.setAttribute('data-tooltip', text);
+    tooltip.setAttribute('tabindex', '0');
+    tooltip.setAttribute('role', 'tooltip');
+    target.appendChild(tooltip);
+  });
+}
+
+// Call after DOM is loaded
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => { injectHelpTooltips(); setupTooltipPositioning(); });
+} else {
+  injectHelpTooltips();
+  setupTooltipPositioning();
+}
+
+// ===== Dynamic Tooltip Positioning =====
+// Keeps tooltips within viewport boundaries by computing fixed coordinates on hover.
+function setupTooltipPositioning() {
+  document.addEventListener('mouseover', (e) => {
+    const tip = e.target.closest('.help-tooltip');
+    if (!tip || !tip.hasAttribute('data-tooltip')) return;
+
+    const rect = tip.getBoundingClientRect();
+    const tooltipMaxWidth = 320;
+    const margin = 8;
+
+    // Estimate tooltip size (will be refined by browser)
+    const text = tip.getAttribute('data-tooltip');
+    const estLines = Math.ceil((text.length * 6) / tooltipMaxWidth);
+    const estHeight = Math.max(32, estLines * 17 + 16);
+    const estWidth = Math.min(tooltipMaxWidth, Math.max(200, text.length * 6));
+
+    // Desired position: above the icon, centered
+    let x = rect.left + rect.width / 2;
+    let y = rect.top - estHeight - 8;
+
+    // If not enough space above, show below
+    if (y < margin) {
+      y = rect.bottom + 8;
+    }
+
+    // Clamp X to keep tooltip within viewport
+    const halfW = estWidth / 2;
+    if (x - halfW < margin) x = halfW + margin;
+    if (x + halfW > window.innerWidth - margin) x = window.innerWidth - halfW - margin;
+
+    // Clamp Y to viewport
+    if (y + estHeight > window.innerHeight - margin) {
+      y = window.innerHeight - estHeight - margin;
+    }
+    if (y < margin) y = margin;
+
+    tip.style.setProperty('--tooltip-x', x + 'px');
+    tip.style.setProperty('--tooltip-y', y + 'px');
   });
 }

@@ -5,6 +5,7 @@ node_modules/
 dist/
 src-tauri/target/
 research-pocs/*/target/
+src-frontend/coverage/
 
 # Logs and temp files
 *.log

@@ -58,13 +58,13 @@ describe("OxideLink tab navigation", () => {
     expect(await profilesPanel.isDisplayed()).toBe(true);
   });
 
-  it("should switch to the Updater tab when clicked", async () => {
-    const tabBtn = await $('.tab-btn[data-tab="updater"]');
+  it("should switch to the Settings tab when clicked", async () => {
+    const tabBtn = await $('.tab-btn[data-tab="settings"]');
     await tabBtn.click();
 
-    const updaterPanel = await $("#tab-updater");
-    await updaterPanel.waitForDisplayed({ timeout: 5000 });
-    expect(await updaterPanel.isDisplayed()).toBe(true);
+    const settingsPanel = await $("#tab-settings");
+    await settingsPanel.waitForDisplayed({ timeout: 5000 });
+    expect(await settingsPanel.isDisplayed()).toBe(true);
   });
 
   it("should switch to the Cloud tab when clicked", async () => {

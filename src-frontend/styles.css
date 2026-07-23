@@ -14,6 +14,13 @@
   --radius: 18px;
   --ease-mercury: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-liquid: cubic-bezier(0.65, 0, 0.35, 1);
+  --health-good: #5ee6a0;
+  --health-warn: #f0c060;
+  --health-critical: #ff6b6b;
+  --trend-up: #5ee6a0;
+  --trend-down: #ff6b6b;
+  --font-size-label: 11px;
+  --font-size-hint: 10px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -131,6 +138,7 @@ html, body {
   grid-template-columns: repeat(2, 1fr);
   gap: 12px;
   overflow-y: auto;
+  padding-top: 4px;
 }
 
 .panel {
@@ -1044,7 +1052,7 @@ input:checked + .toggle-slider:before {
 }
 
 .readout-pair .readout-label {
-  font-size: 9px;
+  font-size: var(--font-size-label);
 }
 
 .readout-pair .readout-value {
@@ -1075,7 +1083,7 @@ input:checked + .toggle-slider:before {
 }
 
 .factory-label {
-  font-size: 9px;
+  font-size: var(--font-size-label);
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -2530,4 +2538,670 @@ input[type="range"]:focus-visible,
 .binding-row select {
   padding: 6px 8px;
   font-size: 12px;
+}
+
+/* ============================================================
+   Reusable component classes (Phase 1.2 UI/UX remediation)
+   ============================================================ */
+
+/* Toast notification system */
+.toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.toast {
+  background: var(--glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  padding: 12px 18px;
+  color: var(--text);
+  font-size: 13px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  pointer-events: auto;
+  animation: toast-slide-in 0.4s var(--ease-mercury);
+  max-width: 360px;
+}
+.toast.success { border-left: 3px solid var(--ok); }
+.toast.error { border-left: 3px solid var(--warn); }
+.toast.info { border-left: 3px solid var(--accent); }
+@keyframes toast-slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* Loading spinner */
+.loading-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(120,200,255,0.2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 32px 20px;
+  color: var(--text-dim);
+}
+.empty-state .empty-icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+}
+.empty-state .empty-desc {
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+/* Status badge */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.status-badge .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+.status-badge.ok .status-dot {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+}
+.status-badge.err .status-dot {
+  background: var(--warn);
+  box-shadow: 0 0 8px var(--warn);
+}
+
+/* Button hierarchy */
+.btn-secondary {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--glass-border);
+}
+.btn-secondary:hover {
+  color: var(--text);
+  border-color: rgba(120,200,255,0.3);
+  background: var(--glass-hi);
+}
+
+/* ========================================
+   RESPONSIVE BREAKPOINTS
+   ======================================== */
+
+/* Tablet landscape and small desktop (≤1024px) */
+@media (max-width: 1024px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+  .panel-wide {
+    grid-column: span 1;
+  }
+  .settings-layout {
+    gap: 10px;
+    padding: 10px;
+  }
+  .settings-nav {
+    min-width: 140px;
+    width: 140px;
+  }
+  .settings-nav-btn {
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+  .factory-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .bindings-list {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+  .curve-editor-wrap canvas,
+  .zone-diagram-wrap canvas {
+    max-width: 100%;
+    height: auto;
+  }
+  .overlay-preview-wrap canvas {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+/* Tablet portrait (≤768px) */
+@media (max-width: 768px) {
+  body {
+    font-size: 13px;
+  }
+  .header {
+    padding: 10px 14px;
+  }
+  .brand-text h1 {
+    font-size: 16px;
+  }
+  .tab-nav {
+    gap: 2px;
+    padding: 4px;
+  }
+  .tab-btn {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+  .grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .panel {
+    padding: 14px 16px;
+  }
+  .panel h2 {
+    font-size: 15px;
+  }
+  .settings-layout {
+    flex-direction: column;
+    height: auto;
+    overflow: visible;
+  }
+  .settings-nav {
+    flex-direction: row;
+    min-width: unset;
+    width: 100%;
+    overflow-x: auto;
+    padding: 6px;
+    gap: 6px;
+  }
+  .settings-nav-btn {
+    flex-shrink: 0;
+    padding: 8px 12px;
+    white-space: nowrap;
+    font-size: 12px;
+  }
+  .settings-content {
+    overflow: visible;
+  }
+  .factory-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .bindings-list {
+    grid-template-columns: 1fr 1fr;
+  }
+  .macro-steps {
+    max-height: 180px;
+  }
+  .macro-list {
+    max-height: 140px;
+  }
+  .log-table-wrap {
+    max-height: 280px;
+  }
+  .metric-value-large {
+    font-size: 22px;
+  }
+  .curve-editor-wrap canvas,
+  .zone-diagram-wrap canvas,
+  .overlay-preview-wrap canvas,
+  .flick-diagram-wrap canvas {
+    max-width: 280px;
+    height: auto;
+  }
+}
+
+/* Mobile (≤480px) */
+@media (max-width: 480px) {
+  body {
+    font-size: 12px;
+  }
+  .header {
+    padding: 8px 10px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .brand-text h1 {
+    font-size: 14px;
+  }
+  .brand-mark {
+    width: 28px;
+    height: 28px;
+  }
+  .tab-nav {
+    gap: 1px;
+    padding: 3px;
+  }
+  .tab-btn {
+    padding: 5px 8px;
+    font-size: 10px;
+  }
+  .panel {
+    padding: 12px 14px;
+    border-radius: 14px;
+  }
+  .panel h2 {
+    font-size: 14px;
+  }
+  .metric-value-large {
+    font-size: 20px;
+  }
+  .factory-grid {
+    grid-template-columns: 1fr;
+  }
+  .bindings-list {
+    grid-template-columns: 1fr;
+  }
+  .btn {
+    padding: 6px 12px;
+    font-size: 11px;
+  }
+  .toast-container {
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+  }
+  .toast {
+    max-width: 100%;
+  }
+}
+
+/* ========================================
+   PHASE 2: UI COMPONENT STYLES
+   ======================================== */
+
+/* Slider with live value bubble */
+.slider-val {
+  display: inline-block;
+  min-width: 36px;
+  text-align: right;
+  font-family: 'Cascadia Code', 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  margin-left: 8px;
+}
+
+/* Range slider enhanced thumb styling (base input[type="range"] already defined above) */
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(120,200,255,0.5);
+  cursor: grab;
+  transition: transform 0.15s var(--ease-mercury);
+}
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+input[type="range"]::-webkit-slider-thumb:active {
+  cursor: grabbing;
+  transform: scale(1.1);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(120,200,255,0.5);
+  cursor: grab;
+  border: none;
+  transition: transform 0.15s var(--ease-mercury);
+}
+input[type="range"]::-moz-range-thumb:hover {
+  transform: scale(1.2);
+}
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgba(120,200,255,0.3), 0 0 8px rgba(120,200,255,0.5);
+}
+input[type="range"]:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 3px rgba(120,200,255,0.3), 0 0 8px rgba(120,200,255,0.5);
+}
+
+/* File picker row */
+.file-picker-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.file-picker-row input[type="text"] {
+  flex: 1;
+}
+
+/* LED preset active state */
+.led-preset.active {
+  background: rgba(120,200,255,0.2);
+  border-color: var(--accent);
+  box-shadow: 0 0 12px rgba(120,200,255,0.3);
+}
+
+/* Loading spinner in button */
+.btn .loading-spinner {
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.btn.loading {
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+/* Empty state in list contexts */
+.macro-list .empty-state,
+.macro-steps .empty-state {
+  list-style: none;
+  padding: 20px 10px;
+}
+
+/* Sub-tab navigation (for Calibration/Diagnostics splits in Phase 3) */
+.sub-tab-nav {
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  margin-bottom: 12px;
+  background: var(--glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  overflow-x: auto;
+}
+.sub-tab-btn {
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s var(--ease-mercury);
+}
+.sub-tab-btn:hover {
+  color: var(--text);
+  background: rgba(120,200,255,0.08);
+}
+.sub-tab-btn.active {
+  color: var(--accent);
+  background: rgba(120,200,255,0.15);
+  border-color: rgba(120,200,255,0.3);
+}
+.sub-tab-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Profile card active state and new sub-classes (base .profile-card defined above) */
+.profile-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 16px rgba(120,200,255,0.3);
+}
+.profile-card .profile-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.profile-card .profile-card-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+.profile-card .profile-card-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(120,200,255,0.2);
+  color: var(--accent);
+}
+.profile-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+/* Timeline view (for Phase 3 Macros) */
+.timeline-view {
+  height: 80px;
+  background: rgba(0,0,0,0.3);
+  border-radius: 10px;
+  border: 1px solid var(--glass-border);
+  padding: 8px;
+  margin-bottom: 12px;
+  position: relative;
+  overflow: hidden;
+}
+.timeline-track {
+  height: 40px;
+  position: relative;
+  background: rgba(255,255,255,0.05);
+  border-radius: 6px;
+}
+.timeline-step {
+  position: absolute;
+  height: 100%;
+  background: rgba(120,200,255,0.3);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s var(--ease-mercury);
+  overflow: hidden;
+}
+.timeline-step:hover {
+  background: rgba(120,200,255,0.5);
+  transform: scaleY(1.1);
+}
+.timeline-label {
+  font-size: 10px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 4px;
+}
+.timeline-ruler {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 9px;
+  color: var(--text-dim);
+}
+
+/* Macro step drag handle */
+.step-drag-handle {
+  cursor: grab;
+  color: var(--text-dim);
+  padding: 0 4px;
+  user-select: none;
+  font-size: 14px;
+}
+.step-drag-handle:active {
+  cursor: grabbing;
+}
+.macro-step.dragging {
+  opacity: 0.5;
+  background: rgba(120,200,255,0.1);
+}
+
+/* Health gauge (for Diagnostics) */
+.health-gauge {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  margin: 0 auto;
+}
+.health-gauge svg {
+  transform: rotate(-90deg);
+}
+.health-gauge .gauge-bg {
+  fill: none;
+  stroke: rgba(255,255,255,0.1);
+  stroke-width: 6;
+}
+.health-gauge .gauge-fill {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 6;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.5s var(--ease-mercury), stroke 0.3s ease;
+}
+.health-gauge .gauge-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Help tooltip */
+.help-tooltip {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 50%;
+  background: rgba(120,200,255,0.15);
+  color: var(--text-dim);
+  font-size: 10px;
+  cursor: help;
+  margin-left: 4px;
+  position: relative;
+}
+.help-tooltip:hover {
+  background: rgba(120,200,255,0.3);
+  color: var(--accent);
+}
+.help-tooltip[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: fixed;
+  bottom: unset;
+  left: var(--tooltip-x, 50%);
+  top: var(--tooltip-y, 10%);
+  transform: translateX(-50%);
+  background: var(--glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: normal;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  max-width: min(320px, 90vw);
+  width: max-content;
+  z-index: 10001;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  pointer-events: none;
+}
+
+/* Modal fade-in animation (base .modal-overlay defined above) */
+@keyframes modal-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ========================================
+   PHASE 4: ANIMATIONS & TRANSITIONS
+   ======================================== */
+/* NOTE: .tab-pane.active + @keyframes tab-fade-in already defined above (line ~523).
+   .btn:active already defined above (line ~251).
+   @keyframes led-pulse already defined above (line ~774) for .led-indicator.pulse. */
+
+/* Sub-tab content fade-in */
+.cal-subtab-content:not([hidden]),
+.diag-subtab-content:not([hidden]) {
+  animation: subtab-fade-in 0.25s var(--ease-mercury);
+}
+@keyframes subtab-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Profile card hover lift (enhanced — overrides base transition to add transform/box-shadow) */
+.profile-card {
+  transition: transform 0.3s var(--ease-mercury), box-shadow 0.3s var(--ease-mercury), border-color 0.3s var(--ease-mercury);
+}
+
+/* Panel hover subtle lift (enhanced) */
+.panel {
+  transition: transform 0.2s var(--ease-mercury), box-shadow 0.2s var(--ease-mercury);
+}
+
+/* Toast slide-out */
+.toast.removing {
+  animation: toast-slide-out 0.3s var(--ease-mercury) forwards;
+}
+@keyframes toast-slide-out {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(100%); opacity: 0; }
+}
+
+/* Settings section transition (animation property merges with existing padding rule) */
+.settings-section {
+  animation: settings-fade-in 0.3s var(--ease-mercury);
+}
+@keyframes settings-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* LED indicator pulse when toggled on (uses distinct keyframe to avoid clobbering
+   the existing .led-indicator.pulse box-shadow animation) */
+.led-indicator.on .led-dot {
+  animation: led-on-pulse 2s ease-in-out infinite;
+}
+@keyframes led-on-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* Connection chip pulse when disconnected */
+#connection-chip.disconnected {
+  animation: conn-pulse 2s ease-in-out infinite;
+}
+@keyframes conn-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* Macro recording pulse */
+.recording-active {
+  animation: recording-pulse 1s ease-in-out infinite;
+}
+@keyframes recording-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* kbd element styling */
+kbd {
+  background: rgba(120,200,255,0.15);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'Cascadia Code', 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--accent);
+  border: 1px solid rgba(120,200,255,0.2);
 }

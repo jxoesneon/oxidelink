@@ -3025,7 +3025,7 @@ mod tests {
                     })
                 );
 
-                sleep(Duration::from_millis(45)).await;
+                sleep(Duration::from_millis(200)).await;
                 let mut downs = 0;
                 while let Ok(ev) = rx.try_recv() {
                     if ev

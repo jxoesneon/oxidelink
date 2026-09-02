@@ -45,7 +45,6 @@
       "bundle/nsis/ViGEmBusSetup.exe": "resources/drivers/ViGEmBusSetup.exe"
     },
     "windows": {
-      "signCommand": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -ExecutionPolicy Bypass -NoProfile -File C:\\Users\\josee\\OxideLink\\scripts\\sign-tauri.ps1 -Path %1",
       "digestAlgorithm": "sha256",
       "timestampUrl": "http://timestamp.digicert.com",
       "nsis": {

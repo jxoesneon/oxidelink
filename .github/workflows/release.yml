@@ -32,7 +32,18 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run tauri build
+        shell: pwsh
+        run: |
+          # Unset signing env vars if secrets are not configured so Tauri
+          # skips updater signing instead of failing on an empty key.
+          if ([string]::IsNullOrEmpty($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            Remove-Item Env:\TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
+            Remove-Item Env:\TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
+            Write-Host "No updater signing key configured — building without updater signatures"
+          } else {
+            Write-Host "Updater signing key configured — building with updater signatures"
+          }
+          npm run tauri build
 
       - name: Code-sign artifacts
         if: ${{ env.OXIDELINK_PFX_PASSWORD != '' }}

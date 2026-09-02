@@ -668,8 +668,7 @@ mod tests {
         let data = powersaves_bin();
         let header = parse_ntag215_header(&data).unwrap();
         let json = serde_json::to_string(&header).expect("serialize");
-        let deserialized: Ntag215Header =
-            serde_json::from_str(&json).expect("deserialize");
+        let deserialized: Ntag215Header = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(header, deserialized);
     }
 
@@ -924,10 +923,7 @@ mod tests {
     fn validate_path_rejects_nonexistent_absolute_path() {
         let base = std::env::temp_dir().join("oxidlink_nfc_test_nonexist");
         let bogus = base.join("does_not_exist.bin");
-        let result = validate_path_within_base(
-            bogus.to_string_lossy().as_ref(),
-            &base,
-        );
+        let result = validate_path_within_base(bogus.to_string_lossy().as_ref(), &base);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(

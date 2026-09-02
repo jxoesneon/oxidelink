@@ -247,7 +247,13 @@ mod tests {
     fn map_to_xinput_a_button() {
         let mut buttons = ButtonState::default();
         buttons.a = true;
-        let state = map_to_xinput(&buttons, &StickState::default(), &StickState::default(), 0.0, 0.0);
+        let state = map_to_xinput(
+            &buttons,
+            &StickState::default(),
+            &StickState::default(),
+            0.0,
+            0.0,
+        );
         assert_eq!(state.buttons, XINPUT_GAMEPAD_A);
     }
 
@@ -255,7 +261,13 @@ mod tests {
     fn map_to_xinput_b_button() {
         let mut buttons = ButtonState::default();
         buttons.b = true;
-        let state = map_to_xinput(&buttons, &StickState::default(), &StickState::default(), 0.0, 0.0);
+        let state = map_to_xinput(
+            &buttons,
+            &StickState::default(),
+            &StickState::default(),
+            0.0,
+            0.0,
+        );
         assert_eq!(state.buttons, XINPUT_GAMEPAD_B);
     }
 
@@ -263,7 +275,13 @@ mod tests {
     fn map_to_xinput_x_button() {
         let mut buttons = ButtonState::default();
         buttons.x = true;
-        let state = map_to_xinput(&buttons, &StickState::default(), &StickState::default(), 0.0, 0.0);
+        let state = map_to_xinput(
+            &buttons,
+            &StickState::default(),
+            &StickState::default(),
+            0.0,
+            0.0,
+        );
         assert_eq!(state.buttons, XINPUT_GAMEPAD_X);
     }
 
@@ -271,7 +289,13 @@ mod tests {
     fn map_to_xinput_y_button() {
         let mut buttons = ButtonState::default();
         buttons.y = true;
-        let state = map_to_xinput(&buttons, &StickState::default(), &StickState::default(), 0.0, 0.0);
+        let state = map_to_xinput(
+            &buttons,
+            &StickState::default(),
+            &StickState::default(),
+            0.0,
+            0.0,
+        );
         assert_eq!(state.buttons, XINPUT_GAMEPAD_Y);
     }
 
@@ -279,7 +303,13 @@ mod tests {
     fn map_to_xinput_left_shoulder() {
         let mut buttons = ButtonState::default();
         buttons.l = true;
-        let state = map_to_xinput(&buttons, &StickState::default(), &StickState::default(), 0.0, 0.0);
+        let state = map_to_xinput(
+            &buttons,
+            &StickState::default(),
+            &StickState::default(),
+            0.0,
+            0.0,
+        );
         assert_eq!(state.buttons, XINPUT_GAMEPAD_LEFT_SHOULDER);
     }
 
@@ -287,7 +317,13 @@ mod tests {
     fn map_to_xinput_right_shoulder() {
         let mut buttons = ButtonState::default();
         buttons.r = true;
-        let state = map_to_xinput(&buttons, &StickState::default(), &StickState::default(), 0.0, 0.0);
+        let state = map_to_xinput(
+            &buttons,
+            &StickState::default(),
+            &StickState::default(),
+            0.0,
+            0.0,
+        );
         assert_eq!(state.buttons, XINPUT_GAMEPAD_RIGHT_SHOULDER);
     }
 
@@ -295,7 +331,13 @@ mod tests {
     fn map_to_xinput_left_thumb() {
         let mut buttons = ButtonState::default();
         buttons.stick_l = true;
-        let state = map_to_xinput(&buttons, &StickState::default(), &StickState::default(), 0.0, 0.0);
+        let state = map_to_xinput(
+            &buttons,
+            &StickState::default(),
+            &StickState::default(),
+            0.0,
+            0.0,
+        );
         assert_eq!(state.buttons, XINPUT_GAMEPAD_LEFT_THUMB);
     }
 
@@ -303,7 +345,13 @@ mod tests {
     fn map_to_xinput_right_thumb() {
         let mut buttons = ButtonState::default();
         buttons.stick_r = true;
-        let state = map_to_xinput(&buttons, &StickState::default(), &StickState::default(), 0.0, 0.0);
+        let state = map_to_xinput(
+            &buttons,
+            &StickState::default(),
+            &StickState::default(),
+            0.0,
+            0.0,
+        );
         assert_eq!(state.buttons, XINPUT_GAMEPAD_RIGHT_THUMB);
     }
 
@@ -311,7 +359,13 @@ mod tests {
     fn map_to_xinput_back_button() {
         let mut buttons = ButtonState::default();
         buttons.minus = true;
-        let state = map_to_xinput(&buttons, &StickState::default(), &StickState::default(), 0.0, 0.0);
+        let state = map_to_xinput(
+            &buttons,
+            &StickState::default(),
+            &StickState::default(),
+            0.0,
+            0.0,
+        );
         assert_eq!(state.buttons, XINPUT_GAMEPAD_BACK);
     }
 
@@ -319,7 +373,13 @@ mod tests {
     fn map_to_xinput_start_button() {
         let mut buttons = ButtonState::default();
         buttons.plus = true;
-        let state = map_to_xinput(&buttons, &StickState::default(), &StickState::default(), 0.0, 0.0);
+        let state = map_to_xinput(
+            &buttons,
+            &StickState::default(),
+            &StickState::default(),
+            0.0,
+            0.0,
+        );
         assert_eq!(state.buttons, XINPUT_GAMEPAD_START);
     }
 
@@ -327,7 +387,13 @@ mod tests {
     fn map_to_xinput_guide_button() {
         let mut buttons = ButtonState::default();
         buttons.home = true;
-        let state = map_to_xinput(&buttons, &StickState::default(), &StickState::default(), 0.0, 0.0);
+        let state = map_to_xinput(
+            &buttons,
+            &StickState::default(),
+            &StickState::default(),
+            0.0,
+            0.0,
+        );
         assert_eq!(state.buttons, XINPUT_GAMEPAD_GUIDE);
     }
 
@@ -335,7 +401,13 @@ mod tests {
     fn map_to_xinput_dpad_up() {
         let mut buttons = ButtonState::default();
         buttons.dpad_up = true;
-        let state = map_to_xinput(&buttons, &StickState::default(), &StickState::default(), 0.0, 0.0);
+        let state = map_to_xinput(
+            &buttons,
+            &StickState::default(),
+            &StickState::default(),
+            0.0,
+            0.0,
+        );
         assert_eq!(state.buttons, XINPUT_GAMEPAD_DPAD_UP);
     }
 
@@ -343,7 +415,13 @@ mod tests {
     fn map_to_xinput_dpad_down() {
         let mut buttons = ButtonState::default();
         buttons.dpad_down = true;
-        let state = map_to_xinput(&buttons, &StickState::default(), &StickState::default(), 0.0, 0.0);
+        let state = map_to_xinput(
+            &buttons,
+            &StickState::default(),
+            &StickState::default(),
+            0.0,
+            0.0,
+        );
         assert_eq!(state.buttons, XINPUT_GAMEPAD_DPAD_DOWN);
     }
 
@@ -351,7 +429,13 @@ mod tests {
     fn map_to_xinput_dpad_left() {
         let mut buttons = ButtonState::default();
         buttons.dpad_left = true;
-        let state = map_to_xinput(&buttons, &StickState::default(), &StickState::default(), 0.0, 0.0);
+        let state = map_to_xinput(
+            &buttons,
+            &StickState::default(),
+            &StickState::default(),
+            0.0,
+            0.0,
+        );
         assert_eq!(state.buttons, XINPUT_GAMEPAD_DPAD_LEFT);
     }
 
@@ -359,7 +443,13 @@ mod tests {
     fn map_to_xinput_dpad_right() {
         let mut buttons = ButtonState::default();
         buttons.dpad_right = true;
-        let state = map_to_xinput(&buttons, &StickState::default(), &StickState::default(), 0.0, 0.0);
+        let state = map_to_xinput(
+            &buttons,
+            &StickState::default(),
+            &StickState::default(),
+            0.0,
+            0.0,
+        );
         assert_eq!(state.buttons, XINPUT_GAMEPAD_DPAD_RIGHT);
     }
 
@@ -381,7 +471,13 @@ mod tests {
         buttons.dpad_down = true;
         buttons.dpad_left = true;
         buttons.dpad_right = true;
-        let state = map_to_xinput(&buttons, &StickState::default(), &StickState::default(), 0.0, 0.0);
+        let state = map_to_xinput(
+            &buttons,
+            &StickState::default(),
+            &StickState::default(),
+            0.0,
+            0.0,
+        );
         let expected = XINPUT_GAMEPAD_A
             | XINPUT_GAMEPAD_B
             | XINPUT_GAMEPAD_X
@@ -411,7 +507,13 @@ mod tests {
             y: 1.0,
             ..Default::default()
         };
-        let state = map_to_xinput(&ButtonState::default(), &left, &StickState::default(), 0.0, 0.0);
+        let state = map_to_xinput(
+            &ButtonState::default(),
+            &left,
+            &StickState::default(),
+            0.0,
+            0.0,
+        );
         assert_eq!(state.thumb_lx, 32767);
         assert_eq!(state.thumb_ly, 32767);
         assert_eq!(state.thumb_rx, 0);
@@ -425,7 +527,13 @@ mod tests {
             y: -1.0,
             ..Default::default()
         };
-        let state = map_to_xinput(&ButtonState::default(), &left, &StickState::default(), 0.0, 0.0);
+        let state = map_to_xinput(
+            &ButtonState::default(),
+            &left,
+            &StickState::default(),
+            0.0,
+            0.0,
+        );
         assert_eq!(state.thumb_lx, -32767);
         assert_eq!(state.thumb_ly, -32767);
     }
@@ -437,7 +545,13 @@ mod tests {
             y: -0.5,
             ..Default::default()
         };
-        let state = map_to_xinput(&ButtonState::default(), &StickState::default(), &right, 0.0, 0.0);
+        let state = map_to_xinput(
+            &ButtonState::default(),
+            &StickState::default(),
+            &right,
+            0.0,
+            0.0,
+        );
         assert_eq!(state.thumb_rx, (0.5 * 32767.0) as i16);
         assert_eq!(state.thumb_ry, (-0.5 * 32767.0) as i16);
     }

@@ -405,8 +405,7 @@ impl DeviceLoop {
             let _ = cmd_tx_for_cleanup
                 .try_send(DeviceCommand::Write(subcmd::build_usb_enable_timeout()));
             tokio::time::sleep(Duration::from_millis(50)).await;
-            let _ = cmd_tx_for_cleanup
-                .try_send(DeviceCommand::Write(subcmd::build_usb_reset()));
+            let _ = cmd_tx_for_cleanup.try_send(DeviceCommand::Write(subcmd::build_usb_reset()));
             // Give the blocking thread time to drain the commands before
             // we await its completion.
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -462,7 +461,10 @@ impl DeviceLoop {
                     .await;
             match result {
                 Ok(true) => {
-                    info!("Bluetooth reconnect triggered successfully for slot {}", slot);
+                    info!(
+                        "Bluetooth reconnect triggered successfully for slot {}",
+                        slot
+                    );
                 }
                 Ok(false) => {
                     warn!(
@@ -2349,13 +2351,21 @@ mod tests {
         // Values above 4095 are not possible with u16, but the clamp ensures
         // that values near the extremes map to exactly ±1.0.
         let (lx, _, _, _) = super::fallback_normalize(4096, 2048, 2048, 2048);
-        assert!((lx - 1.0).abs() < 1e-6, "4096 should clamp to 1.0, got {}", lx);
+        assert!(
+            (lx - 1.0).abs() < 1e-6,
+            "4096 should clamp to 1.0, got {}",
+            lx
+        );
     }
 
     #[test]
     fn fallback_normalize_midpoint_is_half() {
         let (lx, _, _, _) = super::fallback_normalize(3072, 2048, 2048, 2048);
-        assert!((lx - 0.5).abs() < 1e-3, "3072 should map to ~0.5, got {}", lx);
+        assert!(
+            (lx - 0.5).abs() < 1e-3,
+            "3072 should map to ~0.5, got {}",
+            lx
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -2429,7 +2439,10 @@ mod tests {
     fn validate_controller_enable_real_device_checks_alone_suffices() {
         use crate::state::{AppConfig, ValidationConfig};
 
-        let mut state = ControllerState { connected: true, ..Default::default() };
+        let mut state = ControllerState {
+            connected: true,
+            ..Default::default()
+        };
         let cfg = AppConfig {
             validation: ValidationConfig {
                 enable_real_device_checks: true,
@@ -2474,7 +2487,10 @@ mod tests {
     fn validate_controller_require_vigembus_only() {
         use crate::state::{AppConfig, ValidationConfig};
 
-        let mut state = ControllerState { connected: true, ..Default::default() };
+        let mut state = ControllerState {
+            connected: true,
+            ..Default::default()
+        };
         let cfg = AppConfig {
             real_device_validation: true,
             validation: ValidationConfig {
@@ -2500,7 +2516,10 @@ mod tests {
     fn validate_controller_require_hidhide_only() {
         use crate::state::{AppConfig, ValidationConfig};
 
-        let mut state = ControllerState { connected: true, ..Default::default() };
+        let mut state = ControllerState {
+            connected: true,
+            ..Default::default()
+        };
         let cfg = AppConfig {
             real_device_validation: true,
             validation: ValidationConfig {
@@ -2526,7 +2545,10 @@ mod tests {
     fn validate_controller_no_strict_cal_passes_without_calibration() {
         use crate::state::{AppConfig, ValidationConfig};
 
-        let mut state = ControllerState { connected: true, ..Default::default() };
+        let mut state = ControllerState {
+            connected: true,
+            ..Default::default()
+        };
         let cfg = AppConfig {
             real_device_validation: true,
             validation: ValidationConfig {
@@ -2612,11 +2634,13 @@ mod tests {
         // After processing a standard report, the controller state should be
         // updated: connected == true, battery parsed, buttons set.
         let state = shared.slots[0].read();
-        assert!(state.connected, "state.connected should be true after report");
+        assert!(
+            state.connected,
+            "state.connected should be true after report"
+        );
         assert!(state.battery_percent > 0, "battery_percent should be > 0");
         // The mock report rotates face buttons (Y/X/B/A). At step 1, X is pressed.
-        let any_button = state.buttons.a || state.buttons.b
-            || state.buttons.x || state.buttons.y;
+        let any_button = state.buttons.a || state.buttons.b || state.buttons.x || state.buttons.y;
         assert!(any_button, "at least one face button should be pressed");
     }
 
@@ -2666,8 +2690,14 @@ mod tests {
                 found_connection_quality = true;
             }
         }
-        assert!(found_controller_state, "ControllerState event should be emitted");
-        assert!(found_connection_quality, "ConnectionQuality event should be emitted");
+        assert!(
+            found_controller_state,
+            "ControllerState event should be emitted"
+        );
+        assert!(
+            found_connection_quality,
+            "ConnectionQuality event should be emitted"
+        );
     }
 
     #[test]
@@ -2952,9 +2982,15 @@ mod tests {
         };
         let physical = imu::raw_to_physical(&frame);
         // accel_z = 4096 * (1/4096) = 1.0 g (gravity)
-        assert!((physical.accel_z - 1.0).abs() < 1e-6, "accel_z should be ~1.0g");
+        assert!(
+            (physical.accel_z - 1.0).abs() < 1e-6,
+            "accel_z should be ~1.0g"
+        );
         // gyro_x = 13371 * (1/13371) = 1.0 deg/s
-        assert!((physical.gyro_x - 1.0).abs() < 1e-6, "gyro_x should be ~1.0 dps");
+        assert!(
+            (physical.gyro_x - 1.0).abs() < 1e-6,
+            "gyro_x should be ~1.0 dps"
+        );
         // accel_y = 0
         assert!((physical.accel_y - 0.0).abs() < 1e-6);
     }
@@ -3045,7 +3081,11 @@ mod tests {
         };
         let physical = imu::raw_to_physical(&frame);
         let (pitch, roll) = imu::calculate_tilt(&physical);
-        assert!((pitch - 0.0).abs() < 1e-3, "pitch should be ~0, got {}", pitch);
+        assert!(
+            (pitch - 0.0).abs() < 1e-3,
+            "pitch should be ~0, got {}",
+            pitch
+        );
         assert!((roll - 0.0).abs() < 1e-3, "roll should be ~0, got {}", roll);
     }
 
@@ -3066,7 +3106,11 @@ mod tests {
         let physical = imu::raw_to_physical(&frame);
         let (pitch, _roll) = imu::calculate_tilt(&physical);
         // pitch = atan2(y, z) = atan2(1.0, 0.0) = 90 degrees
-        assert!((pitch - 90.0).abs() < 1e-2, "pitch should be ~90, got {}", pitch);
+        assert!(
+            (pitch - 90.0).abs() < 1e-2,
+            "pitch should be ~90, got {}",
+            pitch
+        );
     }
 
     #[test]
@@ -3090,8 +3134,16 @@ mod tests {
             estimator.update(&physical, &physical, dt);
         }
         let (pitch, roll) = estimator.get_tilt();
-        assert!((pitch - 0.0).abs() < 1.0, "pitch should converge to ~0, got {}", pitch);
-        assert!((roll - 0.0).abs() < 1.0, "roll should converge to ~0, got {}", roll);
+        assert!(
+            (pitch - 0.0).abs() < 1.0,
+            "pitch should converge to ~0, got {}",
+            pitch
+        );
+        assert!(
+            (roll - 0.0).abs() < 1.0,
+            "roll should converge to ~0, got {}",
+            roll
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -3285,8 +3337,8 @@ mod tests {
 
     #[test]
     fn handle_report_emits_raw_hid_report() {
-        use crate::state::IpcEvent;
         use crate::hid_parser::REPORT_ID_STANDARD;
+        use crate::state::IpcEvent;
         use std::thread::sleep;
 
         let shared = SharedState::new();
@@ -3312,7 +3364,10 @@ mod tests {
                 found_raw = true;
             }
         }
-        assert!(found_raw, "RawHidReport event should be emitted on first report");
+        assert!(
+            found_raw,
+            "RawHidReport event should be emitted on first report"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -3336,7 +3391,10 @@ mod tests {
         loop_instance.handle_report(&report);
 
         let state = shared.slots[0].read();
-        assert!(state.connected, "state should be connected after default BT report");
+        assert!(
+            state.connected,
+            "state should be connected after default BT report"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -3419,9 +3477,15 @@ mod tests {
         loop_instance.handle_subcmd_reply(&reply);
 
         let state = shared.slots[0].read();
-        assert!(state.device_info.is_some(), "device_info should be populated");
+        assert!(
+            state.device_info.is_some(),
+            "device_info should be populated"
+        );
         let info = state.device_info.as_ref().unwrap();
-        assert!(!info.firmware_version.is_empty(), "firmware version should be set");
+        assert!(
+            !info.firmware_version.is_empty(),
+            "firmware version should be set"
+        );
 
         // A DeviceInfo event should be emitted.
         let mut found = false;
@@ -3448,7 +3512,10 @@ mod tests {
         loop_instance.handle_subcmd_reply(&reply);
 
         let state = shared.slots[0].read();
-        assert!(state.imu_enabled, "imu_enabled should be true after 0x40 ACK");
+        assert!(
+            state.imu_enabled,
+            "imu_enabled should be true after 0x40 ACK"
+        );
     }
 
     #[tokio::test]
@@ -3595,7 +3662,10 @@ mod tests {
                 found = true;
             }
         }
-        assert!(found, "ControllerState event should be emitted after subcmd reply");
+        assert!(
+            found,
+            "ControllerState event should be emitted after subcmd reply"
+        );
     }
 
     #[tokio::test]
@@ -3702,8 +3772,8 @@ mod tests {
 
     #[tokio::test]
     async fn handle_subcmd_reply_spi_serial_number() {
-        use crate::subcmd::{SPI_ADDR_SERIAL, SUBCMD_SPI_FLASH_READ};
         use crate::state::IpcEvent;
+        use crate::subcmd::{SPI_ADDR_SERIAL, SUBCMD_SPI_FLASH_READ};
 
         let shared = SharedState::new();
         let (tx, mut rx) = broadcast::channel(256);
@@ -3851,8 +3921,8 @@ mod tests {
 
     #[tokio::test]
     async fn handle_subcmd_reply_spi_imu_factory_cal() {
-        use crate::subcmd::{SPI_ADDR_IMU_FACTORY, SUBCMD_SPI_FLASH_READ};
         use crate::state::IpcEvent;
+        use crate::subcmd::{SPI_ADDR_IMU_FACTORY, SUBCMD_SPI_FLASH_READ};
 
         let shared = SharedState::new();
         let (tx, mut rx) = broadcast::channel(256);
@@ -4178,7 +4248,10 @@ mod tests {
 
         // The collector should have received samples.
         let collector = shared.gate_cal_collector.lock();
-        assert!(!collector.samples.is_empty(), "gate cal collector should have samples");
+        assert!(
+            !collector.samples.is_empty(),
+            "gate cal collector should have samples"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -4211,7 +4284,10 @@ mod tests {
             }
         }
         // At least one ImuData event should have been emitted (from the first report).
-        assert!(imu_count >= 1, "at least one ImuData event should be emitted");
+        assert!(
+            imu_count >= 1,
+            "at least one ImuData event should be emitted"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -4289,8 +4365,8 @@ mod tests {
 
     #[tokio::test]
     async fn handle_standard_report_feeds_macro_engine_when_recording() {
-        use crate::mock::MockGenerator;
         use crate::macro_engine::MacroEngine;
+        use crate::mock::MockGenerator;
 
         let shared = SharedState::new();
         let (tx, _rx) = broadcast::channel(256);
@@ -4355,8 +4431,8 @@ mod tests {
         // battery_raw is in the high nibble of byte 2.
         let mut reply = build_subcmd_reply_with_data(SUBCMD_ENABLE_IMU, &[]);
         reply[2] = 0x21; // battery level 1 (critical) in high nibble, charging bit set
-        // Actually, charging bit set means warning is suppressed.
-        // Let's use 0x20 (level 1, not charging) → percent = ~12.5%.
+                         // Actually, charging bit set means warning is suppressed.
+                         // Let's use 0x20 (level 1, not charging) → percent = ~12.5%.
         reply[2] = 0x20;
         loop_instance.handle_subcmd_reply(&reply);
 
@@ -4367,7 +4443,10 @@ mod tests {
                 found_warning = true;
             }
         }
-        assert!(found_warning, "BatteryWarning event should be emitted for low battery");
+        assert!(
+            found_warning,
+            "BatteryWarning event should be emitted for low battery"
+        );
     }
 
     #[tokio::test]
@@ -4396,7 +4475,10 @@ mod tests {
                 found_warning = true;
             }
         }
-        assert!(!found_warning, "BatteryWarning should not be emitted when charging");
+        assert!(
+            !found_warning,
+            "BatteryWarning should not be emitted when charging"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -4463,8 +4545,8 @@ mod tests {
 
     #[tokio::test]
     async fn handle_subcmd_reply_spi_imu_user_cal_with_magic() {
-        use crate::subcmd::{SPI_ADDR_IMU_USER, SUBCMD_SPI_FLASH_READ};
         use crate::state::IpcEvent;
+        use crate::subcmd::{SPI_ADDR_IMU_USER, SUBCMD_SPI_FLASH_READ};
 
         let shared = SharedState::new();
         let (tx, mut rx) = broadcast::channel(256);
@@ -4494,7 +4576,10 @@ mod tests {
                 found = true;
             }
         }
-        assert!(found, "CalibrationData event should be emitted for IMU user cal");
+        assert!(
+            found,
+            "CalibrationData event should be emitted for IMU user cal"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -4691,7 +4776,10 @@ mod tests {
         while let Ok(ev) = rx.try_recv() {
             if let crate::state::IpcEvent::DeviceInfo { data } = ev {
                 if let Some(spi) = data.spi {
-                    assert!(!spi.calibration, "calibration should be false when no stick cal");
+                    assert!(
+                        !spi.calibration,
+                        "calibration should be false when no stick cal"
+                    );
                     found = true;
                 }
             }
@@ -4705,8 +4793,8 @@ mod tests {
 
     #[test]
     fn handle_report_raw_hid_throttled_on_rapid_reports() {
-        use crate::state::IpcEvent;
         use crate::hid_parser::REPORT_ID_STANDARD;
+        use crate::state::IpcEvent;
         use std::thread::sleep;
 
         let shared = SharedState::new();
@@ -4818,7 +4906,10 @@ mod tests {
     fn validate_controller_enable_real_device_checks_without_real_device_validation() {
         use crate::state::{AppConfig, ValidationConfig};
 
-        let mut state = ControllerState { connected: true, ..Default::default() };
+        let mut state = ControllerState {
+            connected: true,
+            ..Default::default()
+        };
         // real_device_validation is false, but enable_real_device_checks is true.
         let cfg = AppConfig {
             real_device_validation: false,

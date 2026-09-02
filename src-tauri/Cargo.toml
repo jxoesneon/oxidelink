@@ -1,6 +1,6 @@
 [package]
 name = "oxidelink"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "OxideLink — Native Windows driver and manager for the Nintendo Switch Pro Controller"
 license = "MIT"

@@ -559,14 +559,8 @@ mod tests {
             target: "test".into(),
             message: "hello".into(),
         });
-        assert_eq!(
-            collector.recent(Some("INFO".into()), None, None).len(),
-            1
-        );
-        assert_eq!(
-            collector.recent(Some("Info".into()), None, None).len(),
-            1
-        );
+        assert_eq!(collector.recent(Some("INFO".into()), None, None).len(), 1);
+        assert_eq!(collector.recent(Some("Info".into()), None, None).len(), 1);
     }
 
     #[test]
@@ -598,7 +592,9 @@ mod tests {
             message: "hello".into(),
         });
         assert_eq!(
-            collector.recent(None, Some("nonexistent".into()), None).len(),
+            collector
+                .recent(None, Some("nonexistent".into()), None)
+                .len(),
             0
         );
     }

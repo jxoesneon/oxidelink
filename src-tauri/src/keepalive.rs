@@ -349,7 +349,10 @@ mod tests {
         manager.report_power_event("BTHUSB_Event_Power_Down");
         {
             let s = status.read();
-            assert_eq!(s.interval_ms, 4_000, "rapid power-down should be rate-limited");
+            assert_eq!(
+                s.interval_ms, 4_000,
+                "rapid power-down should be rate-limited"
+            );
             assert_eq!(s.power_events_detected, 2);
         }
     }

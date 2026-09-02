@@ -5,7 +5,7 @@ Join the OxideLink community to get help, share profiles, and follow development
 ## Links
 
 - **Discord server:** https://discord.gg/oxidelink *(placeholder invite)*
-- **GitHub repository:** https://github.com/yourusername/oxidelink *(placeholder URL)*
+- **GitHub repository:** https://github.com/jxoesneon/oxidelink
 
 ## Getting support
 
@@ -51,4 +51,4 @@ Feature requests are tracked as GitHub Discussions or Issues. Use the `#feature-
 
 ## Code of conduct
 
-Be respectful, constructive, and inclusive. Harassment or discriminatory language will not be tolerated.
+Be respectful, constructive, and inclusive. See [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) for the full text. Harassment or discriminatory language will not be tolerated.

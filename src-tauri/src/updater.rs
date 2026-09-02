@@ -625,7 +625,10 @@ mod tests {
     fn sample_manifest_has_url() {
         let manifest = generate_sample_update_manifest();
         assert!(manifest.get("url").is_some());
-        assert!(manifest["url"].as_str().unwrap().contains("OxideLink_0.2.0"));
+        assert!(manifest["url"]
+            .as_str()
+            .unwrap()
+            .contains("OxideLink_0.2.0"));
     }
 
     #[test]

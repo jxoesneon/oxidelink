@@ -752,7 +752,11 @@ mod tests {
     fn parse_poll_output_picks_latest_timestamp() {
         let base = 621_355_968_000_000_000i64;
         // out-of-order: later event first
-        let input = format!("10|{}\n5|{}\n", base + 5_000 * 10_000, base + 1_000 * 10_000);
+        let input = format!(
+            "10|{}\n5|{}\n",
+            base + 5_000 * 10_000,
+            base + 1_000 * 10_000
+        );
         let (snap, _) = parse_poll_output(&input);
         assert_eq!(snap.last_event_id, EVT_REMOTE_UNPAIRED);
         assert_eq!(snap.last_event_ts, 5_000);
@@ -874,7 +878,9 @@ mod tests {
 
     #[test]
     fn bth_usb_etw_event_clone_preserves_event_id() {
-        let ev = BthUsbEtwEvent { event_id: EVT_HCI_SIZE_MISMATCH };
+        let ev = BthUsbEtwEvent {
+            event_id: EVT_HCI_SIZE_MISMATCH,
+        };
         let c = ev.clone();
         assert_eq!(c.event_id, ev.event_id);
     }
@@ -957,7 +963,12 @@ mod tests {
     #[test]
     fn parse_poll_output_counts_repeated_same_id() {
         let base = 621_355_968_000_000_000i64;
-        let input = format!("5|{}\n5|{}\n5|{}\n", base + 10_000, base + 20_000, base + 30_000);
+        let input = format!(
+            "5|{}\n5|{}\n5|{}\n",
+            base + 10_000,
+            base + 20_000,
+            base + 30_000
+        );
         let (snap, total) = parse_poll_output(&input);
         assert_eq!(snap.power_down_events, 3);
         assert_eq!(total, 3);

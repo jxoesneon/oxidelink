@@ -704,11 +704,7 @@ mod tests {
                 position: pos.into(),
                 ..OverlayConfig::default()
             };
-            assert!(
-                cfg.validate().is_ok(),
-                "position '{}' should be valid",
-                pos
-            );
+            assert!(cfg.validate().is_ok(), "position '{}' should be valid", pos);
         }
     }
 

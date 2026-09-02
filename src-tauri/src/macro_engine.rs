@@ -740,7 +740,8 @@ mod tests {
     #[test]
     fn store_load_from_invalid_json_returns_error() {
         let n = TEST_ID.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir().join(format!("bad-macro-{}-{}.json", std::process::id(), n));
+        let path =
+            std::env::temp_dir().join(format!("bad-macro-{}-{}.json", std::process::id(), n));
         std::fs::write(&path, "not valid json").unwrap();
         let result = MacroStore::load_from(&path);
         assert!(result.is_err());
@@ -813,7 +814,9 @@ mod tests {
     #[tokio::test]
     async fn store_persist_async_writes_file() {
         let store = temp_store();
-        store.save(&make_macro("p-1", vec![MacroStep::WaitMs(1)])).unwrap();
+        store
+            .save(&make_macro("p-1", vec![MacroStep::WaitMs(1)]))
+            .unwrap();
         // Overwrite via persist_async after modifying in-memory.
         {
             let mut list = store.macros.lock();
@@ -979,10 +982,7 @@ mod tests {
         let (_shared, engine, _rx) = test_engine();
         let mac = make_macro(
             "cancel-test",
-            vec![
-                MacroStep::WaitMs(5000),
-                MacroStep::PressButton(ButtonId::A),
-            ],
+            vec![MacroStep::WaitMs(5000), MacroStep::PressButton(ButtonId::A)],
         );
         let engine2 = engine.clone();
         let mac2 = mac.clone();

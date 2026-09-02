@@ -1,4 +1,4 @@
-﻿use crate::kbm::KbmEmulator;
+use crate::kbm::KbmEmulator;
 use crate::macro_engine::MacroEngine;
 use crate::vixinput::VirtualXInput;
 use parking_lot::{
@@ -2497,7 +2497,10 @@ mod tests {
 
     #[test]
     fn match_mode_serialization() {
-        assert_eq!(serde_json::to_string(&MatchMode::Exact).unwrap(), "\"exact\"");
+        assert_eq!(
+            serde_json::to_string(&MatchMode::Exact).unwrap(),
+            "\"exact\""
+        );
         assert_eq!(
             serde_json::to_string(&MatchMode::Contains).unwrap(),
             "\"contains\""

@@ -28,9 +28,8 @@ use windows_sys::Win32::Foundation::{FALSE, HANDLE, TRUE};
 
 /// GUID for the Bluetooth HID service (Human Interface Device).
 /// {00001124-0000-1000-8000-00805F9B34FB}
-const HID_SERVICE_GUID: windows_sys::core::GUID = windows_sys::core::GUID::from_u128(
-    0x00001124_0000_1000_8000_00805F9B34FB,
-);
+const HID_SERVICE_GUID: windows_sys::core::GUID =
+    windows_sys::core::GUID::from_u128(0x00001124_0000_1000_8000_00805F9B34FB);
 
 /// Maximum number of Bluetooth radios to scan.
 const MAX_RADIOS: usize = 8;
@@ -52,14 +51,12 @@ pub fn trigger_pro_controller_reconnect() -> bool {
     let mut connected = false;
 
     // Enumerate Bluetooth radios.
-    let mut radio_params: BLUETOOTH_FIND_RADIO_PARAMS =
-        unsafe { std::mem::zeroed() };
+    let mut radio_params: BLUETOOTH_FIND_RADIO_PARAMS = unsafe { std::mem::zeroed() };
     radio_params.dwSize = std::mem::size_of::<BLUETOOTH_FIND_RADIO_PARAMS>() as u32;
 
     let mut radio_handle: HANDLE = std::ptr::null_mut();
-    let radio_find: HBLUETOOTH_RADIO_FIND = unsafe {
-        BluetoothFindFirstRadio(&radio_params, &mut radio_handle)
-    };
+    let radio_find: HBLUETOOTH_RADIO_FIND =
+        unsafe { BluetoothFindFirstRadio(&radio_params, &mut radio_handle) };
 
     if radio_find.is_null() {
         warn!("No Bluetooth radios found — cannot trigger BT reconnect");
@@ -95,9 +92,7 @@ pub fn trigger_pro_controller_reconnect() -> bool {
         if connected {
             info!("Bluetooth reconnect triggered for Pro Controller");
         } else {
-            warn!(
-                "Pro Controller found in Bluetooth cache but HID service enable failed"
-            );
+            warn!("Pro Controller found in Bluetooth cache but HID service enable failed");
         }
     } else {
         warn!(
@@ -112,10 +107,13 @@ pub fn trigger_pro_controller_reconnect() -> bool {
 /// Scans devices on a single Bluetooth radio for a Pro Controller and
 /// attempts to enable the HID service. Returns `true` if a Pro Controller
 /// was found and the HID service was successfully enabled.
-fn trigger_reconnect_on_radio(radio_handle: HANDLE, found: &mut bool, connected: &mut bool) -> bool {
+fn trigger_reconnect_on_radio(
+    radio_handle: HANDLE,
+    found: &mut bool,
+    connected: &mut bool,
+) -> bool {
     // Set up search params: only return authenticated (paired) devices.
-    let mut search_params: BLUETOOTH_DEVICE_SEARCH_PARAMS =
-        unsafe { std::mem::zeroed() };
+    let mut search_params: BLUETOOTH_DEVICE_SEARCH_PARAMS = unsafe { std::mem::zeroed() };
     search_params.dwSize = std::mem::size_of::<BLUETOOTH_DEVICE_SEARCH_PARAMS>() as u32;
     search_params.fReturnAuthenticated = TRUE;
     search_params.fReturnRemembered = TRUE;
@@ -165,7 +163,10 @@ fn trigger_reconnect_on_radio(radio_handle: HANDLE, found: &mut bool, connected:
                     )
                 };
                 if result == 0 {
-                    info!("HID service enabled for Pro Controller ({}) — BT reconnect triggered", addr);
+                    info!(
+                        "HID service enabled for Pro Controller ({}) — BT reconnect triggered",
+                        addr
+                    );
                     *connected = true;
                     unsafe {
                         BluetoothFindDeviceClose(device_find);
@@ -178,7 +179,10 @@ fn trigger_reconnect_on_radio(radio_handle: HANDLE, found: &mut bool, connected:
                     );
                 }
             } else {
-                info!("Pro Controller ({}) is already connected over Bluetooth", addr);
+                info!(
+                    "Pro Controller ({}) is already connected over Bluetooth",
+                    addr
+                );
                 *connected = true;
                 unsafe {
                     BluetoothFindDeviceClose(device_find);

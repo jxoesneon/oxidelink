@@ -211,9 +211,9 @@ fn init_sentry(dsn: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sentry::protocol::Value;
     use sentry::protocol::{Context, Exception, Frame, OsContext, Request, User, Values};
     use std::borrow::Cow;
-    use sentry::protocol::Value;
     use std::sync::Mutex;
 
     /// Serializes tests that mutate the global `CRASH_ENABLED` flag.
@@ -279,7 +279,8 @@ mod tests {
     fn pii_scrubbing_redacts_common_patterns() {
         // Keep IP and serial before the Windows path so the path regex does not
         // over-consume the rest of the string.
-        let input = "IP 192.168.0.1 serial ABC123456789 MAC 00:1A:2B:3C:4D:5E path C:\\Users\\Me\\file.txt";
+        let input =
+            "IP 192.168.0.1 serial ABC123456789 MAC 00:1A:2B:3C:4D:5E path C:\\Users\\Me\\file.txt";
         let out = scrub_pii(input);
         assert!(out.contains("<MAC>"));
         assert!(out.contains("<PATH>"));
@@ -387,7 +388,9 @@ mod tests {
     fn is_test_dsn_rejects_other_values() {
         assert!(!is_test_dsn(Some("")));
         assert!(!is_test_dsn(Some("other")));
-        assert!(!is_test_dsn(Some("https://o447951.ingest.sentry.io/5439417")));
+        assert!(!is_test_dsn(Some(
+            "https://o447951.ingest.sentry.io/5439417"
+        )));
     }
 
     // -----------------------------------------------------------------------
@@ -513,7 +516,10 @@ mod tests {
         event.dist = Some(Cow::Owned("dist1".to_string()));
         event.user = Some(User::default());
         event.request = Some(Request::default());
-        event.contexts.insert("os".to_string(), Context::Os(Box::new(OsContext::default())));
+        event.contexts.insert(
+            "os".to_string(),
+            Context::Os(Box::new(OsContext::default())),
+        );
         event.tags.insert("host".to_string(), "my-host".to_string());
         event
             .extra
@@ -590,8 +596,14 @@ mod tests {
 
         let result = before_send(event).expect("event returned");
         let ex_out = &result.exception.values[0];
-        let st_out = ex_out.raw_stacktrace.as_ref().expect("raw stacktrace present");
-        let abs = st_out.frames[0].abs_path.as_ref().expect("abs_path present");
+        let st_out = ex_out
+            .raw_stacktrace
+            .as_ref()
+            .expect("raw stacktrace present");
+        let abs = st_out.frames[0]
+            .abs_path
+            .as_ref()
+            .expect("abs_path present");
         assert!(abs.contains("<PATH>"));
         assert!(!abs.contains("/home/alice"));
     }
@@ -633,7 +645,10 @@ mod tests {
     #[test]
     fn crash_dir_ends_with_oxide_link_crashes() {
         let dir = crash_dir();
-        let components: Vec<_> = dir.components().map(|c| c.as_os_str().to_string_lossy().to_string()).collect();
+        let components: Vec<_> = dir
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .collect();
         assert!(components.iter().any(|c| c == "OxideLink"));
         assert!(components.iter().any(|c| c == "crashes"));
     }

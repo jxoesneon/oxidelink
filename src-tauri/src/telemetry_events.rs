@@ -1066,8 +1066,7 @@ mod tests {
             );
         }
         assert_eq!(t.buffer_len(), ALLOWED_EVENTS.len());
-        let names: Vec<String> =
-            t.buffered_events().iter().map(|e| e.name.clone()).collect();
+        let names: Vec<String> = t.buffered_events().iter().map(|e| e.name.clone()).collect();
         for name in ALLOWED_EVENTS {
             assert!(
                 names.contains(&(*name).to_string()),

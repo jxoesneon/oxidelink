@@ -1164,7 +1164,11 @@ mod tests {
     #[test]
     fn normalize_stick_calibrated_above_max_clamps() {
         let result = normalize_stick_calibrated(0xFFF, 0x800, 0x500, 0xB00);
-        assert!((result - 1.0).abs() < 0.001, "should clamp to 1.0, got {}", result);
+        assert!(
+            (result - 1.0).abs() < 0.001,
+            "should clamp to 1.0, got {}",
+            result
+        );
     }
 
     #[test]

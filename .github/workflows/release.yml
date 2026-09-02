@@ -12,6 +12,8 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
+    env:
+      OXIDELINK_PFX_PASSWORD: ${{ secrets.OXIDELINK_PFX_PASSWORD }}
     steps:
       - uses: actions/checkout@v7
 
@@ -34,8 +36,6 @@ jobs:
 
       - name: Code-sign artifacts
         if: ${{ env.OXIDELINK_PFX_PASSWORD != '' }}
-        env:
-          OXIDELINK_PFX_PASSWORD: ${{ secrets.OXIDELINK_PFX_PASSWORD }}
         run: |
           $ErrorActionPreference = 'Stop'
           $bundleRoot = 'src-tauri/target/release/bundle'

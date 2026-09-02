@@ -41,3 +41,8 @@ src-tauri/updater.json
 
 # E2E test dependencies (installed separately)
 e2e-tests/node_modules/
+
+# Real driver installers must not be committed — see src-tauri/bundle/nsis/README.md
+# The 0-byte placeholder .exe files are tracked for NSIS build compatibility.
+# If you replace them with real installers, run: git update-index --skip-worktree <file>
+# to prevent accidental commits of large binaries.

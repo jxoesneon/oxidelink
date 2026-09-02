@@ -2,7 +2,23 @@
 
 > Turn your Nintendo Switch Pro Controller into a precision PC gamepad — with gyro aim, Flick Stick, macros, profiles, and DSU motion output.
 
+[![CI](https://github.com/jxoesneon/oxidelink/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/jxoesneon/oxidelink/actions/workflows/test.yml)
+[![Release](https://github.com/jxoesneon/oxidelink/actions/workflows/release.yml/badge.svg)](https://github.com/jxoesneon/oxidelink/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078D4?logo=windows11&logoColor=white)](https://github.com/jxoesneon/oxidelink/releases)
+[![Tauri 2](https://img.shields.io/badge/Tauri-2.0-orange?logo=tauri&logoColor=white)](https://tauri.app)
+
 OxideLink is a Windows Tauri/Rust application that connects a Nintendo Switch Pro Controller (USB or Bluetooth) and exposes it to games as a virtual Xbox 360 or DualShock 4 pad. It also supports keyboard/mouse emulation, DSU/Cemuhook motion streaming, amiibo emulation, and per-game profiles.
+
+## Table of contents
+
+- [Feature matrix](#feature-matrix)
+- [Quick start](#quick-start)
+- [Build from source](#build-from-source)
+- [Testing](#testing)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Feature matrix
 
@@ -53,10 +69,11 @@ The Rust code lives in `src-tauri/`, the Vite frontend in `src-frontend/`, and b
 ```powershell
 # Rust library tests (490 tests)
 cd src-tauri
+cargo fmt --all -- --check
 cargo clippy --lib -- -D warnings
 cargo test --lib
 
-# Frontend unit tests (Vitest, 23 tests)
+# Frontend unit tests (Vitest, 39 tests)
 cd ..
 npm test
 
@@ -87,5 +104,15 @@ See `e2e-tests/README.md` for setup details.
 - [docs/profiles.md](docs/profiles.md) — Profiles, auto-switch, import/export
 - [docs/telemetry.md](docs/telemetry.md) — Telemetry and crash reporting
 - [docs/community.md](docs/community.md) — Community links and contribution guide
-- [CHANGELOG.md](CHANGELOG.md) — Release notes
 - [docs/installer.md](docs/installer.md) — NSIS installer, drivers, and signing
+- [CHANGELOG.md](CHANGELOG.md) — Release notes
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+development setup, code style, and pull request process. By participating,
+you agree to abide by the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## License
+
+OxideLink is released under the [MIT License](LICENSE).

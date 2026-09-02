@@ -22,6 +22,7 @@
     "ip-address": ">=10.3.1",
     "js-yaml": ">=4.3.1",
     "undici": ">=7.29.0",
-    "brace-expansion": ">=2.1.4"
+    "brace-expansion": ">=2.1.4",
+    "extract-zip": "file:vendor/extract-zip-patched"
   }
 }

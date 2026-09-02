@@ -116,8 +116,8 @@ pub fn decode_multi_sz_bytes(bytes: &[u8]) -> Vec<String> {
     let mut current: Vec<u16> = Vec::new();
     let mut was_null = false;
 
-    for chunk in bytes.chunks_exact(2) {
-        let c = u16::from_le_bytes([chunk[0], chunk[1]]);
+    for chunk in bytes.as_chunks::<2>().0 {
+        let c = u16::from_le_bytes(*chunk);
         if c == 0 {
             if was_null {
                 break;
@@ -959,9 +959,7 @@ mod tests {
         // performing any I/O.
         let existing = vec!["\\Device\\App.exe".to_string()];
         let normalized = "\\device\\app.exe".to_lowercase();
-        let already_present = existing
-            .iter()
-            .any(|p| p.to_lowercase() == normalized);
+        let already_present = existing.iter().any(|p| p.to_lowercase() == normalized);
         assert!(already_present);
     }
 
@@ -969,9 +967,7 @@ mod tests {
     fn whitelist_dedup_detects_new_entry() {
         let existing = vec!["\\Device\\Other.exe".to_string()];
         let normalized = "\\device\\app.exe".to_lowercase();
-        let already_present = existing
-            .iter()
-            .any(|p| p.to_lowercase() == normalized);
+        let already_present = existing.iter().any(|p| p.to_lowercase() == normalized);
         assert!(!already_present);
     }
 

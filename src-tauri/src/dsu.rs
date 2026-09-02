@@ -1022,12 +1022,7 @@ mod dsu_unit_tests {
         let controller = connected_controller();
         let p = build_pad_data(0, 0, &controller, None, DEFAULT_SERVER_ID);
         for offset in (76..100).step_by(4) {
-            let v = f32::from_le_bytes([
-                p[offset],
-                p[offset + 1],
-                p[offset + 2],
-                p[offset + 3],
-            ]);
+            let v = f32::from_le_bytes([p[offset], p[offset + 1], p[offset + 2], p[offset + 3]]);
             assert_eq!(v, 0.0, "motion byte at offset {} should be zero", offset);
         }
     }
@@ -1036,9 +1031,7 @@ mod dsu_unit_tests {
     fn pad_data_timestamp_is_nonzero() {
         let controller = connected_controller();
         let p = build_pad_data(0, 0, &controller, None, DEFAULT_SERVER_ID);
-        let ts = u64::from_le_bytes([
-            p[68], p[69], p[70], p[71], p[72], p[73], p[74], p[75],
-        ]);
+        let ts = u64::from_le_bytes([p[68], p[69], p[70], p[71], p[72], p[73], p[74], p[75]]);
         assert!(ts > 0, "timestamp should be a non-zero micros epoch");
     }
 
@@ -1412,7 +1405,7 @@ mod dsu_unit_tests {
         assert_eq!(out[2], 0); // dpad_right
         assert_eq!(out[3], 255); // dpad_up
         assert_eq!(out[6], 255); // a
-        // Triggers are last two (right then left).
+                                 // Triggers are last two (right then left).
         assert_eq!(out[10], 255); // right_trigger = 1.0
         assert_eq!(out[11], 128); // left_trigger = 0.5
     }

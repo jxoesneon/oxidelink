@@ -7,8 +7,8 @@
 // every item with #[allow(dead_code)].
 #![allow(dead_code)]
 
-mod bthusb_monitor;
 mod bt_reconnect;
+mod bthusb_monitor;
 mod cloud;
 mod config;
 mod crash;

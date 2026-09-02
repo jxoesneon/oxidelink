@@ -626,12 +626,14 @@ mod tests {
 
     fn temp_dir() -> PathBuf {
         let n = TEST_ID.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join("oxidelink-pm-tests").join(format!(
-            "{}-{}-{}",
-            crate::state::timestamp_now(),
-            std::process::id(),
-            n
-        ));
+        let dir = std::env::temp_dir()
+            .join("oxidelink-pm-tests")
+            .join(format!(
+                "{}-{}-{}",
+                crate::state::timestamp_now(),
+                std::process::id(),
+                n
+            ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -793,7 +795,11 @@ mod tests {
     #[test]
     fn create_profile_with_auto_rules_stores_them() {
         let (pm, _path) = temp_manager();
-        let rules = vec![rule(AutoRuleKind::ProcessPath, "game.exe", MatchMode::Exact)];
+        let rules = vec![rule(
+            AutoRuleKind::ProcessPath,
+            "game.exe",
+            MatchMode::Exact,
+        )];
         let p = pm.create_profile("WithRules".into(), Some(rules)).unwrap();
         let loaded = pm.get_profile(&p.id).unwrap();
         assert_eq!(loaded.auto_rules.len(), 1);
@@ -972,7 +978,11 @@ mod tests {
             id: "first".into(),
             name: "First".into(),
             enabled: true,
-            auto_rules: vec![rule(AutoRuleKind::WindowTitle, "Match", MatchMode::Contains)],
+            auto_rules: vec![rule(
+                AutoRuleKind::WindowTitle,
+                "Match",
+                MatchMode::Contains,
+            )],
             created_at: 0,
             updated_at: 0,
             nfc: crate::state::NfcConfig::default(),
@@ -982,7 +992,11 @@ mod tests {
             id: "second".into(),
             name: "Second".into(),
             enabled: true,
-            auto_rules: vec![rule(AutoRuleKind::WindowTitle, "Match", MatchMode::Contains)],
+            auto_rules: vec![rule(
+                AutoRuleKind::WindowTitle,
+                "Match",
+                MatchMode::Contains,
+            )],
             created_at: 0,
             updated_at: 0,
             nfc: crate::state::NfcConfig::default(),
@@ -1036,7 +1050,11 @@ mod tests {
 
     #[test]
     fn rule_matches_regex_uses_pattern() {
-        let r = rule(AutoRuleKind::ProcessPath, r"game_\d+\.exe", MatchMode::Regex);
+        let r = rule(
+            AutoRuleKind::ProcessPath,
+            r"game_\d+\.exe",
+            MatchMode::Regex,
+        );
         assert!(rule_matches(&r, "game_42.exe", "title"));
         assert!(!rule_matches(&r, "game.exe", "title"));
     }
@@ -1100,10 +1118,7 @@ mod tests {
         assert_eq!(imported.len(), 1);
         assert_eq!(imported[0].name, "Original");
         // Pre-existing profile should be gone after import.
-        assert!(pm2
-            .list_profiles()
-            .iter()
-            .all(|p| p.name != "PreExisting"));
+        assert!(pm2.list_profiles().iter().all(|p| p.name != "PreExisting"));
     }
 
     #[test]
@@ -1149,11 +1164,7 @@ mod tests {
     #[test]
     fn validate_path_within_base_rejects_relative() {
         let base = std::env::temp_dir();
-        let result = validate_path_within_base(
-            std::path::Path::new("relative.txt"),
-            &base,
-            true,
-        );
+        let result = validate_path_within_base(std::path::Path::new("relative.txt"), &base, true);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("must be absolute"));
     }
@@ -1177,7 +1188,9 @@ mod tests {
         let target = outside.join("file.json");
         let result = validate_path_within_base(&target, &base, true);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("outside the allowed directory"));
+        assert!(result
+            .unwrap_err()
+            .contains("outside the allowed directory"));
         let _ = std::fs::remove_dir_all(&outside);
     }
 

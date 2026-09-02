@@ -77,11 +77,8 @@ mod dsu_network {
         let manager = DsuManager::new(shared.clone());
 
         // Start with a 3-second timeout.
-        let started = tokio::time::timeout(
-            std::time::Duration::from_secs(3),
-            manager.start(),
-        )
-        .await;
+        let started =
+            tokio::time::timeout(std::time::Duration::from_secs(3), manager.start()).await;
         match started {
             Ok(true) => {}
             Ok(false) => {
@@ -94,11 +91,7 @@ mod dsu_network {
             }
         }
         // Stop with a 3-second timeout.
-        let stopped = tokio::time::timeout(
-            std::time::Duration::from_secs(3),
-            manager.stop(),
-        )
-        .await;
+        let stopped = tokio::time::timeout(std::time::Duration::from_secs(3), manager.stop()).await;
         assert!(stopped.is_ok(), "DsuManager::stop should not time out");
         assert!(stopped.unwrap(), "DSU server should stop cleanly");
     }
@@ -219,7 +212,10 @@ mod hidhide_io {
             "HidHide driver not installed — skipping"
         );
         let client = HidHideClient::new();
-        assert!(client.is_ok(), "HidHideClient::new should succeed when installed");
+        assert!(
+            client.is_ok(),
+            "HidHideClient::new should succeed when installed"
+        );
     }
 
     /// `get_blacklist` / `get_whitelist` read the current lists from the
@@ -263,7 +259,10 @@ mod hidhide_io {
     #[cfg(windows)]
     fn find_pro_controller_enumerates_devices() {
         let result = find_pro_controller();
-        assert!(result.is_ok(), "find_pro_controller should not error on Windows");
+        assert!(
+            result.is_ok(),
+            "find_pro_controller should not error on Windows"
+        );
         match result.unwrap() {
             Some(path) => eprintln!("Pro Controller found: {}", path),
             None => eprintln!("No Pro Controller detected — connect one to test fully"),
@@ -296,7 +295,10 @@ mod hidhide_io {
 
         // Clear session blacklist.
         let clear_result = client.clear_session_blacklist();
-        assert!(clear_result.is_ok(), "clear_session_blacklist should succeed");
+        assert!(
+            clear_result.is_ok(),
+            "clear_session_blacklist should succeed"
+        );
     }
 
     /// `setup_for_oxidelink` / `teardown` full lifecycle.
@@ -317,7 +319,10 @@ mod hidhide_io {
 
         let client = HidHideClient::new().expect("HidHideClient::new");
         let setup = client.setup_for_oxidelink();
-        assert!(setup.is_ok(), "setup_for_oxidelink should succeed with controller");
+        assert!(
+            setup.is_ok(),
+            "setup_for_oxidelink should succeed with controller"
+        );
 
         // Verify active state.
         let active = client.get_active().expect("get_active");

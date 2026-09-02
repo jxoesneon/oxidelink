@@ -407,7 +407,10 @@ mod tests {
         assert!(config.update_endpoint.is_empty());
         assert!(!config.real_device_validation);
         // per-controller profile slots initialized to None
-        assert_eq!(config.per_controller_profile.len(), crate::state::CONTROLLER_SLOTS);
+        assert_eq!(
+            config.per_controller_profile.len(),
+            crate::state::CONTROLLER_SLOTS
+        );
         assert!(config.per_controller_profile.iter().all(|p| p.is_none()));
     }
 
@@ -525,7 +528,10 @@ mod tests {
         assert_eq!(back.schema_version, persisted.schema_version);
         assert_eq!(back.config.deadzone_left, persisted.config.deadzone_left);
         assert_eq!(back.config.deadzone_right, persisted.config.deadzone_right);
-        assert_eq!(back.config.keepalive_interval_ms, persisted.config.keepalive_interval_ms);
+        assert_eq!(
+            back.config.keepalive_interval_ms,
+            persisted.config.keepalive_interval_ms
+        );
     }
 
     #[test]
@@ -547,10 +553,16 @@ mod tests {
         let parsed: PersistedConfig = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed.schema_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(parsed.config.deadzone_left, persisted.config.deadzone_left);
-        assert_eq!(parsed.config.keepalive_interval_ms, persisted.config.keepalive_interval_ms);
+        assert_eq!(
+            parsed.config.keepalive_interval_ms,
+            persisted.config.keepalive_interval_ms
+        );
         assert_eq!(
             parsed.config.stick_calibration_config.response_curve_type,
-            persisted.config.stick_calibration_config.response_curve_type
+            persisted
+                .config
+                .stick_calibration_config
+                .response_curve_type
         );
     }
 
@@ -709,12 +721,21 @@ mod tests {
         assert!(back.config.mock_mode);
         assert_eq!(back.config.button_remap.a_to, "l");
         assert_eq!(back.config.button_remap.b_to, "r");
-        assert_eq!(back.config.stick_calibration_config.response_curve_type, "s-curve");
-        assert_eq!(back.config.stick_calibration_config.deadzone_shape, "elliptic");
+        assert_eq!(
+            back.config.stick_calibration_config.response_curve_type,
+            "s-curve"
+        );
+        assert_eq!(
+            back.config.stick_calibration_config.deadzone_shape,
+            "elliptic"
+        );
         assert!(back.config.dsu.enabled);
         assert_eq!(back.config.dsu.port, 9999);
         assert!(!back.config.notification_config.enabled);
-        assert_eq!(back.config.profile_manager.active_profile_id, Some("test".into()));
+        assert_eq!(
+            back.config.profile_manager.active_profile_id,
+            Some("test".into())
+        );
     }
 
     // ------------------------------------------------------------------
@@ -733,7 +754,10 @@ mod tests {
         let parsed: PersistedConfig = serde_json::from_str(&read_json).expect("deserialize");
         assert_eq!(parsed.schema_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(parsed.config.deadzone_left, config.deadzone_left);
-        assert_eq!(parsed.config.keepalive_interval_ms, config.keepalive_interval_ms);
+        assert_eq!(
+            parsed.config.keepalive_interval_ms,
+            config.keepalive_interval_ms
+        );
         cleanup(&path);
     }
 
@@ -745,10 +769,7 @@ mod tests {
         let result: Option<AppConfig> = if !path.exists() {
             None
         } else {
-            Some(
-                serde_json::from_str(&fs::read_to_string(&path).unwrap())
-                    .expect("deserialize"),
-            )
+            Some(serde_json::from_str(&fs::read_to_string(&path).unwrap()).expect("deserialize"))
         };
         assert!(result.is_none());
     }
@@ -1104,7 +1125,10 @@ mod tests {
         // transformations defined yet).
         let migrated = migrate(persisted);
         assert_eq!(migrated.config.deadzone_left, config.deadzone_left);
-        assert_eq!(migrated.config.keepalive_interval_ms, config.keepalive_interval_ms);
+        assert_eq!(
+            migrated.config.keepalive_interval_ms,
+            config.keepalive_interval_ms
+        );
     }
 
     #[test]
@@ -1142,11 +1166,7 @@ mod tests {
     #[test]
     fn validate_path_rejects_relative_path() {
         let base = unique_temp_dir("vpath_rel");
-        let result = validate_path_within_base(
-            Path::new("relative/file.json"),
-            &base,
-            true,
-        );
+        let result = validate_path_within_base(Path::new("relative/file.json"), &base, true);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.contains("must be absolute"));
@@ -1174,7 +1194,9 @@ mod tests {
         fs::write(&target, "{}").expect("write");
         let result = validate_path_within_base(&target, &base, false);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("outside the allowed directory"));
+        assert!(result
+            .unwrap_err()
+            .contains("outside the allowed directory"));
         cleanup(&base);
         cleanup(&outside);
     }
@@ -1215,10 +1237,18 @@ mod tests {
 
         let config = AppConfig::default();
         let save_result = save_config_async(&config).await;
-        assert!(save_result.is_ok(), "save_config_async failed: {:?}", save_result);
+        assert!(
+            save_result.is_ok(),
+            "save_config_async failed: {:?}",
+            save_result
+        );
 
         let load_result = load_config_async().await;
-        assert!(load_result.is_ok(), "load_config_async failed: {:?}", load_result);
+        assert!(
+            load_result.is_ok(),
+            "load_config_async failed: {:?}",
+            load_result
+        );
         let loaded = load_result.unwrap();
         assert!(loaded.is_some(), "config should have been saved");
         let loaded = loaded.unwrap();

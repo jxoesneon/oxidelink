@@ -213,7 +213,8 @@ pub enum SubcommandError {
 /// Only one waiter per subcommand ID may be active at a time. If a second
 /// registration replaces the first, the previous waiter's sender is dropped
 /// and its receiver will return a `RecvError`.
-type PendingMap = Arc<Mutex<HashMap<u8, oneshot::Sender<Result<SubcommandResponse, SubcommandError>>>>>;
+type PendingMap =
+    Arc<Mutex<HashMap<u8, oneshot::Sender<Result<SubcommandResponse, SubcommandError>>>>>;
 
 pub struct SubcommandManager {
     pending: PendingMap,
@@ -742,7 +743,7 @@ fn is_all_fff(data: &[u8]) -> bool {
     if data.len() < 9 {
         return false;
     }
-    for chunk in data.chunks_exact(3) {
+    for chunk in data.as_chunks::<3>().0 {
         let (v1, v2) = decode_12bit_pair(chunk);
         if v1 != 0xFFF || v2 != 0xFFF {
             return false;

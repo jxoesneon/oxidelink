@@ -931,8 +931,7 @@ mod tests {
             ..Default::default()
         };
         // The mock ignores query params but still returns the list.
-        let profiles =
-            list_community_profiles_with_config(&config, Some("fps".into())).unwrap();
+        let profiles = list_community_profiles_with_config(&config, Some("fps".into())).unwrap();
         assert_eq!(profiles.len(), 2);
     }
 

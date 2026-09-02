@@ -6,8 +6,8 @@
 //! duplication is harmless in the interim.  The orchestrator will later
 //! refactor `main.rs` to `use oxidelink::*` instead.
 
-pub mod bthusb_monitor;
 pub mod bt_reconnect;
+pub mod bthusb_monitor;
 pub mod config;
 pub mod crash;
 pub mod curves;

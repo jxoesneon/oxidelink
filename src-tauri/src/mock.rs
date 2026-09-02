@@ -680,7 +680,11 @@ mod tests {
         let gen = MockGenerator::new();
         // step increments before use: 1,2,3,4 → mod4 = 1,2,3,0
         let buttons: Vec<u8> = (0..4).map(|_| gen.build_standard_report()[2]).collect();
-        assert_eq!(buttons, vec![0x02, 0x04, 0x08, 0x01], "buttons should rotate X,B,A,Y");
+        assert_eq!(
+            buttons,
+            vec![0x02, 0x04, 0x08, 0x01],
+            "buttons should rotate X,B,A,Y"
+        );
     }
 
     #[test]
@@ -747,7 +751,11 @@ mod tests {
             let r = gen.build_standard_report();
             max_timer = max_timer.max(r[1]);
         }
-        assert!(max_timer <= 63, "timer should wrap at 64, max was {}", max_timer);
+        assert!(
+            max_timer <= 63,
+            "timer should wrap at 64, max was {}",
+            max_timer
+        );
     }
 
     // ------------------------------------------------------------------
@@ -766,7 +774,10 @@ mod tests {
     fn build_imu_standard_report_battery_full() {
         let gen = MockGenerator::new();
         let r = gen.build_imu_standard_report();
-        assert_eq!(r[2], 0x80, "battery byte should indicate full / not charging");
+        assert_eq!(
+            r[2], 0x80,
+            "battery byte should indicate full / not charging"
+        );
     }
 
     #[test]
@@ -856,7 +867,11 @@ mod tests {
         let full = gen_a.build_full_standard_report();
         let imu_only = gen_b.build_imu_standard_report();
         // Left stick should differ (full drifts, imu_only is centered).
-        assert_ne!(&full[6..9], &imu_only[6..9], "full report drifts, imu-only centered");
+        assert_ne!(
+            &full[6..9],
+            &imu_only[6..9],
+            "full report drifts, imu-only centered"
+        );
     }
 
     // ------------------------------------------------------------------
@@ -891,7 +906,10 @@ mod tests {
         // step=1 → step%32=1 < 8 → battery_level=2 → raw=2.
         // battery_raw=2 is even → charging bit (bit 0) is NOT set.
         assert_eq!(parsed.battery.raw, 2);
-        assert!(!parsed.battery.charging, "mock critical battery is not charging");
+        assert!(
+            !parsed.battery.charging,
+            "mock critical battery is not charging"
+        );
     }
 
     #[test]
@@ -943,7 +961,11 @@ mod tests {
     fn build_device_info_reply_mac_address() {
         let gen = MockGenerator::new();
         let r = gen.build_device_info_reply();
-        assert_eq!(&r[19..25], &[0xBB, 0x8A, 0xEA, 0x30, 0x57, 0x01], "MAC address");
+        assert_eq!(
+            &r[19..25],
+            &[0xBB, 0x8A, 0xEA, 0x30, 0x57, 0x01],
+            "MAC address"
+        );
     }
 
     #[test]
@@ -978,7 +1000,10 @@ mod tests {
         // First calibration byte should be low byte of center (0x800) = 0x00
         assert_eq!(parsed.reply_data[0], 0x00, "center_x low byte");
         // Second byte: (center>>8 & 0x0F) | (center_y & 0x0F)<<4 = 0x08 | 0x80 = 0x88
-        assert_eq!(parsed.reply_data[1], 0x08, "center_x high nibble (0x08), center_y low nibble is 0");
+        assert_eq!(
+            parsed.reply_data[1], 0x08,
+            "center_x high nibble (0x08), center_y low nibble is 0"
+        );
     }
 
     #[test]
@@ -987,7 +1012,10 @@ mod tests {
         let r = gen.build_spi_flash_reply(0x0000, 10);
         let parsed = parse_subcmd_reply(&r).unwrap();
         assert_eq!(parsed.reply_data.len(), 10);
-        assert!(parsed.reply_data.iter().all(|&b| b == 0xAA), "unknown addr should fill 0xAA");
+        assert!(
+            parsed.reply_data.iter().all(|&b| b == 0xAA),
+            "unknown addr should fill 0xAA"
+        );
     }
 
     #[test]
@@ -1046,7 +1074,10 @@ mod tests {
         ] {
             let parsed = parse_subcmd_reply(&r).expect("ACK reply should parse");
             assert_eq!(parsed.ack, 0x80, "ACK MSB should be set");
-            assert!(parsed.reply_data.is_empty(), "no payload for ACK-only replies");
+            assert!(
+                parsed.reply_data.is_empty(),
+                "no payload for ACK-only replies"
+            );
         }
     }
 
@@ -1078,7 +1109,10 @@ mod tests {
         let gen = MockGenerator::new();
         let r = gen.build_nfc_ir_report(true);
         let parsed = parse_nfc_ir_report(&r).expect("should parse NFC report");
-        assert!(parsed.nfc_tag.is_some(), "tag should be detected when present");
+        assert!(
+            parsed.nfc_tag.is_some(),
+            "tag should be detected when present"
+        );
     }
 
     #[test]
@@ -1219,7 +1253,10 @@ mod tests {
         let (s1, _, _) = gen.build_controller_state(&config);
         let (s2, _, _) = gen.build_controller_state(&config);
         // step goes 1→2; signal strength changes.
-        assert_ne!(s1.signal_strength, s2.signal_strength, "signal should change");
+        assert_ne!(
+            s1.signal_strength, s2.signal_strength,
+            "signal should change"
+        );
     }
 
     // ------------------------------------------------------------------

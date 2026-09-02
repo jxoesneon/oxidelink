@@ -461,8 +461,14 @@ mod tests {
         // raw_y = -gyro_x = -10 -> smooth -10 -> sy = -1.0, flipped to 1.0.
         gyro.update(&imu(10.0, 10.0), 0.1, &cfg);
         let (sx, sy) = gyro.stick_output();
-        assert!((sx - (-1.0)).abs() < 1e-6, "left stick x should be flipped: {sx}");
-        assert!((sy - 1.0).abs() < 1e-6, "left stick y should be flipped: {sy}");
+        assert!(
+            (sx - (-1.0)).abs() < 1e-6,
+            "left stick x should be flipped: {sx}"
+        );
+        assert!(
+            (sy - 1.0).abs() < 1e-6,
+            "left stick y should be flipped: {sy}"
+        );
     }
 
     #[test]

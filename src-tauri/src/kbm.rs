@@ -605,7 +605,10 @@ mod tests {
     };
 
     /// Helper: build an enabled emulator backed by a mock channel.
-    fn mock_emulator() -> (KbmEmulator, tokio::sync::mpsc::UnboundedReceiver<InputEvent>) {
+    fn mock_emulator() -> (
+        KbmEmulator,
+        tokio::sync::mpsc::UnboundedReceiver<InputEvent>,
+    ) {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let mut emu = KbmEmulator::with_backend(Arc::new(MockBackend::new(tx)));
         let mut cfg = KbmConfig::default();
@@ -618,10 +621,19 @@ mod tests {
 
     #[test]
     fn input_event_key_equality_and_clone() {
-        let a = InputEvent::Key { vk: 0x57, down: true };
+        let a = InputEvent::Key {
+            vk: 0x57,
+            down: true,
+        };
         let b = a.clone();
         assert_eq!(a, b);
-        assert_ne!(a, InputEvent::Key { vk: 0x57, down: false });
+        assert_ne!(
+            a,
+            InputEvent::Key {
+                vk: 0x57,
+                down: false
+            }
+        );
     }
 
     #[test]
@@ -634,10 +646,19 @@ mod tests {
 
     #[test]
     fn input_event_mouse_button_equality() {
-        let a = InputEvent::MouseButton { button: 2, down: true };
+        let a = InputEvent::MouseButton {
+            button: 2,
+            down: true,
+        };
         let b = a.clone();
         assert_eq!(a, b);
-        assert_ne!(a, InputEvent::MouseButton { button: 1, down: true });
+        assert_ne!(
+            a,
+            InputEvent::MouseButton {
+                button: 1,
+                down: true
+            }
+        );
     }
 
     #[test]
@@ -649,7 +670,10 @@ mod tests {
 
     #[test]
     fn input_event_debug_format_contains_variant() {
-        let e = InputEvent::Key { vk: 0x41, down: true };
+        let e = InputEvent::Key {
+            vk: 0x41,
+            down: true,
+        };
         let s = format!("{:?}", e);
         assert!(s.contains("Key"));
     }
@@ -660,11 +684,17 @@ mod tests {
     fn mock_backend_forwards_events_to_channel() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let backend = MockBackend::new(tx);
-        backend.send(InputEvent::Key { vk: 0x41, down: true });
+        backend.send(InputEvent::Key {
+            vk: 0x41,
+            down: true,
+        });
         backend.send(InputEvent::MouseWheel { delta: 5 });
         assert_eq!(
             rx.try_recv(),
-            Ok(InputEvent::Key { vk: 0x41, down: true })
+            Ok(InputEvent::Key {
+                vk: 0x41,
+                down: true
+            })
         );
         assert_eq!(rx.try_recv(), Ok(InputEvent::MouseWheel { delta: 5 }));
         assert!(rx.try_recv().is_err());
@@ -706,11 +736,17 @@ mod tests {
         emu.send_key(0x41, false);
         assert_eq!(
             rx.try_recv(),
-            Ok(InputEvent::Key { vk: 0x41, down: true })
+            Ok(InputEvent::Key {
+                vk: 0x41,
+                down: true
+            })
         );
         assert_eq!(
             rx.try_recv(),
-            Ok(InputEvent::Key { vk: 0x41, down: false })
+            Ok(InputEvent::Key {
+                vk: 0x41,
+                down: false
+            })
         );
     }
 
@@ -729,7 +765,10 @@ mod tests {
         emu.send_mouse_button(1, true);
         assert_eq!(
             rx.try_recv(),
-            Ok(InputEvent::MouseButton { button: 1, down: true })
+            Ok(InputEvent::MouseButton {
+                button: 1,
+                down: true
+            })
         );
     }
 
@@ -781,21 +820,33 @@ mod tests {
         // Down order: LShift (0xA0) then A (0x41)
         assert_eq!(
             rx.try_recv(),
-            Ok(InputEvent::Key { vk: 0xA0, down: true })
+            Ok(InputEvent::Key {
+                vk: 0xA0,
+                down: true
+            })
         );
         assert_eq!(
             rx.try_recv(),
-            Ok(InputEvent::Key { vk: 0x41, down: true })
+            Ok(InputEvent::Key {
+                vk: 0x41,
+                down: true
+            })
         );
         emu.process_button(ButtonId::A, false, &mappings);
         // Up order: reversed -> A then LShift
         assert_eq!(
             rx.try_recv(),
-            Ok(InputEvent::Key { vk: 0x41, down: false })
+            Ok(InputEvent::Key {
+                vk: 0x41,
+                down: false
+            })
         );
         assert_eq!(
             rx.try_recv(),
-            Ok(InputEvent::Key { vk: 0xA0, down: false })
+            Ok(InputEvent::Key {
+                vk: 0xA0,
+                down: false
+            })
         );
         assert!(rx.try_recv().is_err());
     }
@@ -814,7 +865,10 @@ mod tests {
         // Only the valid key (A) should be emitted.
         assert_eq!(
             rx.try_recv(),
-            Ok(InputEvent::Key { vk: 0x41, down: true })
+            Ok(InputEvent::Key {
+                vk: 0x41,
+                down: true
+            })
         );
         assert!(rx.try_recv().is_err());
     }
@@ -854,21 +908,24 @@ mod tests {
         let mappings = Mappings {
             buttons: vec![ButtonMapping {
                 source: ButtonId::A,
-                actions: vec![
-                    Action::Key("W".into()),
-                    Action::MouseButton(0),
-                ],
+                actions: vec![Action::Key("W".into()), Action::MouseButton(0)],
             }],
             ..Default::default()
         };
         emu.process_button(ButtonId::A, true, &mappings);
         assert_eq!(
             rx.try_recv(),
-            Ok(InputEvent::Key { vk: 0x57, down: true })
+            Ok(InputEvent::Key {
+                vk: 0x57,
+                down: true
+            })
         );
         assert_eq!(
             rx.try_recv(),
-            Ok(InputEvent::MouseButton { button: 0, down: true })
+            Ok(InputEvent::MouseButton {
+                button: 0,
+                down: true
+            })
         );
     }
 
@@ -895,7 +952,10 @@ mod tests {
         // First call: A went from false -> true, emits key down.
         assert_eq!(
             rx.try_recv(),
-            Ok(InputEvent::Key { vk: 0x57, down: true })
+            Ok(InputEvent::Key {
+                vk: 0x57,
+                down: true
+            })
         );
 
         // Second call with same state: no new edge, no events.
@@ -907,7 +967,10 @@ mod tests {
         emu.process_controller_state(&state, &cfg, &mappings);
         assert_eq!(
             rx.try_recv(),
-            Ok(InputEvent::Key { vk: 0x57, down: false })
+            Ok(InputEvent::Key {
+                vk: 0x57,
+                down: false
+            })
         );
     }
 
@@ -953,7 +1016,10 @@ mod tests {
         emu.process_stick(StickSide::Left, 0.0, 1.0, &cfg, &mapping);
         assert_eq!(
             rx.try_recv(),
-            Ok(InputEvent::Key { vk: 0x26, down: true }) // VK_UP
+            Ok(InputEvent::Key {
+                vk: 0x26,
+                down: true
+            }) // VK_UP
         );
 
         // Move to down: Up released, Down pressed
@@ -962,8 +1028,14 @@ mod tests {
         let mut saw_down_down = false;
         while let Ok(ev) = rx.try_recv() {
             match ev {
-                InputEvent::Key { vk: 0x26, down: false } => saw_up_up = true,
-                InputEvent::Key { vk: 0x28, down: true } => saw_down_down = true,
+                InputEvent::Key {
+                    vk: 0x26,
+                    down: false,
+                } => saw_up_up = true,
+                InputEvent::Key {
+                    vk: 0x28,
+                    down: true,
+                } => saw_down_down = true,
                 _ => {}
             }
         }
@@ -991,7 +1063,10 @@ mod tests {
         emu.process_stick(StickSide::Left, 1.0, 0.0, &cfg, &mapping);
         assert_eq!(
             rx.try_recv(),
-            Ok(InputEvent::Key { vk: 0x27, down: true }) // VK_RIGHT
+            Ok(InputEvent::Key {
+                vk: 0x27,
+                down: true
+            }) // VK_RIGHT
         );
 
         emu.process_stick(StickSide::Left, -1.0, 0.0, &cfg, &mapping);
@@ -999,8 +1074,14 @@ mod tests {
         let mut saw_left_down = false;
         while let Ok(ev) = rx.try_recv() {
             match ev {
-                InputEvent::Key { vk: 0x27, down: false } => saw_right_up = true,
-                InputEvent::Key { vk: 0x25, down: true } => saw_left_down = true,
+                InputEvent::Key {
+                    vk: 0x27,
+                    down: false,
+                } => saw_right_up = true,
+                InputEvent::Key {
+                    vk: 0x25,
+                    down: true,
+                } => saw_left_down = true,
                 _ => {}
             }
         }
@@ -1055,7 +1136,10 @@ mod tests {
         emu.process_stick(StickSide::Left, 0.3, 0.0, &cfg, &mapping);
         assert_eq!(
             rx.try_recv(),
-            Ok(InputEvent::Key { vk: 0x44, down: true })
+            Ok(InputEvent::Key {
+                vk: 0x44,
+                down: true
+            })
         );
     }
 
@@ -1218,14 +1302,20 @@ mod tests {
         emu.process_stick(StickSide::Left, 1.0, 0.0, &cfg, &mapping);
         assert_eq!(
             rx.try_recv(),
-            Ok(InputEvent::Key { vk: 0x44, down: true })
+            Ok(InputEvent::Key {
+                vk: 0x44,
+                down: true
+            })
         );
 
         // Return to center -> D released
         emu.process_stick(StickSide::Left, 0.0, 0.0, &cfg, &mapping);
         assert_eq!(
             rx.try_recv(),
-            Ok(InputEvent::Key { vk: 0x44, down: false })
+            Ok(InputEvent::Key {
+                vk: 0x44,
+                down: false
+            })
         );
     }
 
@@ -1251,10 +1341,20 @@ mod tests {
         let mut saw_w = false;
         let mut saw_d = false;
         while let Ok(ev) = rx.try_recv() {
-            if ev == (InputEvent::Key { vk: 0x57, down: true }) {
+            if ev
+                == (InputEvent::Key {
+                    vk: 0x57,
+                    down: true,
+                })
+            {
                 saw_w = true;
             }
-            if ev == (InputEvent::Key { vk: 0x44, down: true }) {
+            if ev
+                == (InputEvent::Key {
+                    vk: 0x44,
+                    down: true,
+                })
+            {
                 saw_d = true;
             }
         }

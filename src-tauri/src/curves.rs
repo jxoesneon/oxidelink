@@ -468,12 +468,20 @@ mod tests {
     fn linear_clamps_input() {
         let curve = ResponseCurveType::Linear;
         assert_approx(apply_response_curve(2.0, &curve), 1.0, "linear clamps high");
-        assert_approx(apply_response_curve(-2.0, &curve), -1.0, "linear clamps low");
+        assert_approx(
+            apply_response_curve(-2.0, &curve),
+            -1.0,
+            "linear clamps low",
+        );
     }
 
     #[test]
     fn linear_zero_is_zero() {
-        assert_approx(apply_response_curve(0.0, &ResponseCurveType::Linear), 0.0, "zero");
+        assert_approx(
+            apply_response_curve(0.0, &ResponseCurveType::Linear),
+            0.0,
+            "zero",
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -507,8 +515,14 @@ mod tests {
     #[test]
     fn exponential_preserves_sign() {
         let curve = ResponseCurveType::Exponential(3.0);
-        assert!(apply_response_curve(0.5, &curve) > 0.0, "positive stays positive");
-        assert!(apply_response_curve(-0.5, &curve) < 0.0, "negative stays negative");
+        assert!(
+            apply_response_curve(0.5, &curve) > 0.0,
+            "positive stays positive"
+        );
+        assert!(
+            apply_response_curve(-0.5, &curve) < 0.0,
+            "negative stays negative"
+        );
     }
 
     #[test]
@@ -530,7 +544,11 @@ mod tests {
     fn exponential_invalid_power_returns_clamped_input() {
         let curve = ResponseCurveType::Exponential(f32::NAN);
         // Validation fails, so the clamped input is returned unchanged.
-        assert_approx(apply_response_curve(0.5, &curve), 0.5, "invalid exp passthrough");
+        assert_approx(
+            apply_response_curve(0.5, &curve),
+            0.5,
+            "invalid exp passthrough",
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -627,7 +645,10 @@ mod tests {
         };
         // Should not panic and should produce a value in [0,1].
         let out = apply_response_curve(0.5, &curve);
-        assert!((0.0..=1.0).contains(&out), "clamped bezier out of range: {out}");
+        assert!(
+            (0.0..=1.0).contains(&out),
+            "clamped bezier out of range: {out}"
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -786,7 +807,10 @@ mod tests {
         let p2 = [0.7, 0.1];
         for &x in &[0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0] {
             let y = cubic_bezier_y_for_x(x, &p1, &p2);
-            assert!((0.0..=1.0).contains(&y), "bezier_y out of range for {x}: {y}");
+            assert!(
+                (0.0..=1.0).contains(&y),
+                "bezier_y out of range for {x}: {y}"
+            );
         }
     }
 
@@ -795,8 +819,16 @@ mod tests {
         let p1 = [0.3, 0.9];
         let p2 = [0.7, 0.1];
         // target_x outside [0,1] is clamped.
-        assert_approx(cubic_bezier_y_for_x(-1.0, &p1, &p2), 0.0, "bezier_y clamp low");
-        assert_approx(cubic_bezier_y_for_x(2.0, &p1, &p2), 1.0, "bezier_y clamp high");
+        assert_approx(
+            cubic_bezier_y_for_x(-1.0, &p1, &p2),
+            0.0,
+            "bezier_y clamp low",
+        );
+        assert_approx(
+            cubic_bezier_y_for_x(2.0, &p1, &p2),
+            1.0,
+            "bezier_y clamp high",
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -826,7 +858,8 @@ mod tests {
     fn zone_action_low_zone() {
         let zones = zones_with_actions();
         assert_eq!(zone_action(0.11, &zones), vec![Action::Button(ButtonId::A)]);
-        assert_eq!(zone_action(0.3, &zones), vec![Action::Button(ButtonId::A)]); // equal to low
+        assert_eq!(zone_action(0.3, &zones), vec![Action::Button(ButtonId::A)]);
+        // equal to low
     }
 
     #[test]

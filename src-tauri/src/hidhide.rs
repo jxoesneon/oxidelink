@@ -959,9 +959,7 @@ mod tests {
         // performing any I/O.
         let existing = vec!["\\Device\\App.exe".to_string()];
         let normalized = "\\device\\app.exe".to_lowercase();
-        let already_present = existing
-            .iter()
-            .any(|p| p.to_lowercase() == normalized);
+        let already_present = existing.iter().any(|p| p.to_lowercase() == normalized);
         assert!(already_present);
     }
 
@@ -969,9 +967,7 @@ mod tests {
     fn whitelist_dedup_detects_new_entry() {
         let existing = vec!["\\Device\\Other.exe".to_string()];
         let normalized = "\\device\\app.exe".to_lowercase();
-        let already_present = existing
-            .iter()
-            .any(|p| p.to_lowercase() == normalized);
+        let already_present = existing.iter().any(|p| p.to_lowercase() == normalized);
         assert!(!already_present);
     }
 

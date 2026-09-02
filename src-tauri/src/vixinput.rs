@@ -1460,9 +1460,13 @@ mod tests {
         // When only target_add is set (not ds4_register), Xbox360 gets Some.
         let mut api = VigemApi::default();
         api.target_add = Some(dummy_target_add);
-        assert!(api.add_fn_for_kind(VirtualControllerType::Xbox360).is_some());
+        assert!(api
+            .add_fn_for_kind(VirtualControllerType::Xbox360)
+            .is_some());
         // DS4 falls back to target_add when ds4_register is None.
-        assert!(api.add_fn_for_kind(VirtualControllerType::DualShock4).is_some());
+        assert!(api
+            .add_fn_for_kind(VirtualControllerType::DualShock4)
+            .is_some());
     }
 
     #[test]
@@ -1471,14 +1475,20 @@ mod tests {
         api.target_ds4_register = Some(dummy_target_add);
         api.target_add = Some(dummy_target_add);
         // Both are set; either is acceptable, just ensure it's Some.
-        assert!(api.add_fn_for_kind(VirtualControllerType::DualShock4).is_some());
+        assert!(api
+            .add_fn_for_kind(VirtualControllerType::DualShock4)
+            .is_some());
     }
 
     #[test]
     fn vigem_api_add_fn_for_kind_returns_none_when_both_absent() {
         let api = VigemApi::default();
-        assert!(api.add_fn_for_kind(VirtualControllerType::Xbox360).is_none());
-        assert!(api.add_fn_for_kind(VirtualControllerType::DualShock4).is_none());
+        assert!(api
+            .add_fn_for_kind(VirtualControllerType::Xbox360)
+            .is_none());
+        assert!(api
+            .add_fn_for_kind(VirtualControllerType::DualShock4)
+            .is_none());
     }
 
     #[test]
@@ -1866,7 +1876,11 @@ mod tests {
     #[test]
     fn scale_stick_to_ds4_near_max_is_near_255() {
         let val = scale_stick_to_ds4(32766);
-        assert!(val >= 254, "value just below max should be >= 254, got {}", val);
+        assert!(
+            val >= 254,
+            "value just below max should be >= 254, got {}",
+            val
+        );
     }
 
     #[test]
@@ -1948,9 +1962,13 @@ mod tests {
         // When only ds4_register is set (target_add is None), DS4 should get Some.
         let mut api = VigemApi::default();
         api.target_ds4_register = Some(dummy_target_ds4_register);
-        assert!(api.add_fn_for_kind(VirtualControllerType::DualShock4).is_some());
+        assert!(api
+            .add_fn_for_kind(VirtualControllerType::DualShock4)
+            .is_some());
         // Xbox360 gets None because target_add is None.
-        assert!(api.add_fn_for_kind(VirtualControllerType::Xbox360).is_none());
+        assert!(api
+            .add_fn_for_kind(VirtualControllerType::Xbox360)
+            .is_none());
     }
 
     #[test]

@@ -724,7 +724,10 @@ mod tests {
         // gap=2, expected_gap=2.0, latency = (2/2)*8.33 = 8.33
         assert!((state.connection_quality.latency_ms - 8.33).abs() < 0.01);
         // rate = 1000/8.33 ≈ 120
-        assert_eq!(state.connection_quality.report_rate_hz, (1000.0 / 8.33) as u16);
+        assert_eq!(
+            state.connection_quality.report_rate_hz,
+            (1000.0 / 8.33) as u16
+        );
     }
 
     #[test]
@@ -768,7 +771,10 @@ mod tests {
         TelemetryExtractor::update_connection_quality(&mut state, 20);
         assert!((state.connection_quality.latency_ms - 41.65).abs() < 0.01);
         // rate = 1000/41.65 ≈ 24
-        assert_eq!(state.connection_quality.report_rate_hz, (1000.0 / 41.65) as u16);
+        assert_eq!(
+            state.connection_quality.report_rate_hz,
+            (1000.0 / 41.65) as u16
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -809,10 +815,7 @@ mod tests {
             ..Default::default()
         };
         TelemetryExtractor::update_from_device_info(&mut state, info2);
-        assert_eq!(
-            state.device_info.as_ref().unwrap().firmware_version,
-            "3.0"
-        );
+        assert_eq!(state.device_info.as_ref().unwrap().firmware_version, "3.0");
     }
 
     // -----------------------------------------------------------------------

@@ -141,9 +141,7 @@ impl FlickStick {
             let now = Instant::now();
             let cooldown_elapsed = self
                 .last_flick_time
-                .map(|t| {
-                    now.duration_since(t).as_millis() as u64 >= config.flick_cooldown_ms
-                })
+                .map(|t| now.duration_since(t).as_millis() as u64 >= config.flick_cooldown_ms)
                 .unwrap_or(true);
             if cooldown_elapsed {
                 let delta = normalize_degrees(angle_deg - self.current_yaw);

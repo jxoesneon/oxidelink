@@ -18,7 +18,7 @@
     "@vitest/coverage-v8": "^4.1.10",
     "@vitest/ui": "^4.1.10",
     "jsdom": "^29.1.1",
-    "vite": "^5.4.10",
+    "vite": "^8.2.2",
     "vitest": "^4.1.10"
   },
   "dependencies": {

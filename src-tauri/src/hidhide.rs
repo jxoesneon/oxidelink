@@ -116,7 +116,7 @@ pub fn decode_multi_sz_bytes(bytes: &[u8]) -> Vec<String> {
     let mut current: Vec<u16> = Vec::new();
     let mut was_null = false;
 
-    for chunk in bytes.chunks_exact(2) {
+    for chunk in bytes.as_chunks::<2>().0 {
         let c = u16::from_le_bytes([chunk[0], chunk[1]]);
         if c == 0 {
             if was_null {

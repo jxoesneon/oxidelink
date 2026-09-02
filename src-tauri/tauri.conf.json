@@ -55,7 +55,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlCNzg0NDQzREQwNUIyMUQKUldRZHNnWGRRMFI0bTF2eGVFbGNJNTJLTEoxT2FXNDMzeXc2Sk5wWWZ1N3JtdGdndFk1S2w0U2kK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk1QzVBODFDOUM3NDNDREQKUldUZFBIU2NIS2pGbFU5c3ErU0U5cFZXNnRNMGo4SXE4SnF2Yzd2b1ZRMFM5TGY4NDArRDNEQXcK",
       "endpoints": [
         "https://github.com/jxoesneon/oxidelink/releases/latest/download/latest.json"
       ]

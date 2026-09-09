@@ -8,7 +8,7 @@
     "test:headed": "wdio run wdio.conf.js --headed"
   },
   "dependencies": {
-    "@wdio/cli": "^9.30.0"
+    "@wdio/cli": "^9.31.6"
   },
   "devDependencies": {
     "@wdio/local-runner": "^9.30.0",

@@ -89,7 +89,7 @@ pub struct ImuData {
     pub frames: [ImuFrame; 3],
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ParsedInput {
     pub buttons: ButtonState,
     pub left_stick: StickState,

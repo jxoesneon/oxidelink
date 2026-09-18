@@ -5,6 +5,7 @@ use crate::state::{
     timestamp_now, ButtonState, ControllerState, ResponseCurveType, StickState, StickZones,
 };
 use log::debug;
+use serde::{Deserialize, Serialize};
 
 pub struct TelemetryExtractor;
 

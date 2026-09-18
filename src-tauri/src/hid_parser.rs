@@ -32,7 +32,7 @@ pub fn merge_joycon_pair(left: &ParsedInput, right: &ParsedInput) -> ParsedInput
     merged_buttons.r = right.buttons.r;
     merged_buttons.zr = right.buttons.zr;
     merged_buttons.plus = right.buttons.plus;
-    merged_buttons.r_stick_click = right.buttons.r_stick_click;
+    merged_buttons.stick_r = right.buttons.stick_r;
     merged_buttons.home = left.buttons.home || right.buttons.home;
 
     ParsedInput {

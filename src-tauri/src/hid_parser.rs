@@ -13,6 +13,39 @@ pub use crate::subcmd::{
 
 pub const NINTENDO_VID: u16 = 0x057E;
 pub const PRO_CONTROLLER_PID: u16 = 0x2009;
+pub const JOYCON_L_PID: u16 = 0x2006;
+pub const JOYCON_R_PID: u16 = 0x2007;
+
+/// Returns true if the VID and PID correspond to a supported Nintendo Switch controller
+/// (Switch Pro Controller, Joy-Con (L), or Joy-Con (R)).
+pub fn is_switch_controller(vid: u16, pid: u16) -> bool {
+    vid == NINTENDO_VID && (pid == PRO_CONTROLLER_PID || pid == JOYCON_L_PID || pid == JOYCON_R_PID)
+}
+
+/// Merge left and right Joy-Con parsed input reports into a single unified Pro Controller input report.
+pub fn merge_joycon_pair(left: &ParsedInput, right: &ParsedInput) -> ParsedInput {
+    let mut merged_buttons = left.buttons.clone();
+    merged_buttons.a = right.buttons.a;
+    merged_buttons.b = right.buttons.b;
+    merged_buttons.x = right.buttons.x;
+    merged_buttons.y = right.buttons.y;
+    merged_buttons.r = right.buttons.r;
+    merged_buttons.zr = right.buttons.zr;
+    merged_buttons.plus = right.buttons.plus;
+    merged_buttons.r_stick_click = right.buttons.r_stick_click;
+    merged_buttons.home = left.buttons.home || right.buttons.home;
+
+    ParsedInput {
+        buttons: merged_buttons,
+        left_stick: left.left_stick.clone(),
+        right_stick: right.right_stick.clone(),
+        timer: left.timer.max(right.timer),
+        report_id: REPORT_ID_STANDARD,
+        battery: left.battery.clone(),
+        imu: left.imu.clone().or_else(|| right.imu.clone()),
+        vibrator: left.vibrator | right.vibrator,
+    }
+}
 
 pub const REPORT_ID_STANDARD: u8 = 0x30;
 pub const REPORT_ID_SUBCMD_REPLY: u8 = 0x21;
@@ -1589,5 +1622,35 @@ mod nfc_tests {
         let report = parsed.unwrap();
         assert!(report.nfc_tag.is_none());
         assert!(report.ir_frame.is_none());
+    }
+
+    #[test]
+    fn test_is_switch_controller() {
+        assert!(is_switch_controller(NINTENDO_VID, PRO_CONTROLLER_PID));
+        assert!(is_switch_controller(NINTENDO_VID, JOYCON_L_PID));
+        assert!(is_switch_controller(NINTENDO_VID, JOYCON_R_PID));
+        assert!(!is_switch_controller(NINTENDO_VID, 0x1234));
+        assert!(!is_switch_controller(0x045E, PRO_CONTROLLER_PID));
+    }
+
+    #[test]
+    fn test_merge_joycon_pair() {
+        let mut left = ParsedInput::default();
+        left.buttons.dpad_up = true;
+        left.buttons.minus = true;
+        left.left_stick.x = -0.5;
+
+        let mut right = ParsedInput::default();
+        right.buttons.a = true;
+        right.buttons.plus = true;
+        right.right_stick.y = 0.8;
+
+        let merged = merge_joycon_pair(&left, &right);
+        assert!(merged.buttons.dpad_up);
+        assert!(merged.buttons.minus);
+        assert!(merged.buttons.a);
+        assert!(merged.buttons.plus);
+        assert_eq!(merged.left_stick.x, -0.5);
+        assert_eq!(merged.right_stick.y, 0.8);
     }
 }

@@ -15,11 +15,11 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
-    "@vitest/coverage-v8": "^4.1.10",
-    "@vitest/ui": "^4.1.10",
-    "jsdom": "^29.1.1",
+    "@vitest/coverage-v8": "^5.0.0",
+    "@vitest/ui": "^5.0.0",
+    "jsdom": "^30.0.1",
     "vite": "^8.3.0",
-    "vitest": "^4.1.10"
+    "vitest": "^5.0.0"
   },
   "dependencies": {
     "@tauri-apps/plugin-dialog": "^2.7.2",

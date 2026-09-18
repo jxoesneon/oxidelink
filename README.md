@@ -38,8 +38,10 @@ OxideLink is a Windows Tauri/Rust application that connects a Nintendo Switch Pr
 | NFC / amiibo | Supported | Load `.bin` dumps for amiibo emulation |
 | Auto-updater | Supported | `tauri-plugin-updater` with custom endpoint support |
 | System tray | Supported | Minimize to tray, run on Windows login |
-| In-game overlay | Placeholder | UI stub; not wired at runtime |
-| Cloud / community | Placeholder | Profile sharing stub; not wired at runtime |
+| In-game overlay | Supported | Transparent Webview2 overlay window (`Shift+F11` toggle) |
+| Cloud / community | Supported | REST backend & IPC for sharing and importing profile presets |
+| Joy-Con Dual-Mode | Supported | Switch Joy-Con (L) and Joy-Con (R) paired over Bluetooth |
+| Latency Benchmark | Supported | Sub-millisecond USB vs Bluetooth latency & jitter telemetry |
 
 ## Quick start
 

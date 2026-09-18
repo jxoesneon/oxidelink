@@ -717,6 +717,16 @@ fn get_home_light(ctx: State<'_, AppCtx>) -> state::HomeLight {
 }
 
 #[tauri::command]
+fn get_latency_benchmark(ctx: State<'_, AppCtx>) -> telemetry::LatencyBenchmark {
+    let ctrl = ctx.shared.active_controller();
+    let is_usb = ctrl.is_usb();
+    let lat = (ctrl.connection_quality.latency_ms * 1000.0) as u32;
+    let mut bench = telemetry::LatencyBenchmark::default();
+    bench.record_sample(if lat > 0 { lat } else { 1200 }, is_usb);
+    bench
+}
+
+#[tauri::command]
 fn get_imu_sensitivity(ctx: State<'_, AppCtx>) -> (u8, u8) {
     let ctrl = ctx.shared.active_controller();
     (ctrl.imu_gyro_range, ctrl.imu_accel_range)
@@ -1491,6 +1501,7 @@ fn main() {
             device_loop::get_validation_flags,
             device_loop::set_validation_flags,
             device_loop::validate_current_controller,
+            get_latency_benchmark,
         ])
         .run(tauri::generate_context!())
         .expect("error while running OxideLink Tauri application");

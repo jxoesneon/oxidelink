@@ -248,6 +248,51 @@ impl TelemetryExtractor {
     }
 }
 
+/// Kernel-level input latency benchmark telemetry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LatencyBenchmark {
+    pub min_latency_us: u32,
+    pub max_latency_us: u32,
+    pub avg_latency_us: u32,
+    pub jitter_us: u32,
+    pub sample_count: u64,
+    pub transport_type: String,
+}
+
+impl Default for LatencyBenchmark {
+    fn default() -> Self {
+        Self {
+            min_latency_us: 0,
+            max_latency_us: 0,
+            avg_latency_us: 0,
+            jitter_us: 0,
+            sample_count: 0,
+            transport_type: "Bluetooth".to_string(),
+        }
+    }
+}
+
+impl LatencyBenchmark {
+    pub fn record_sample(&mut self, latency_us: u32, is_usb: bool) {
+        self.transport_type = if is_usb { "USB".into() } else { "Bluetooth".into() };
+        if self.sample_count == 0 {
+            self.min_latency_us = latency_us;
+            self.max_latency_us = latency_us;
+            self.avg_latency_us = latency_us;
+            self.jitter_us = 0;
+        } else {
+            self.min_latency_us = self.min_latency_us.min(latency_us);
+            self.max_latency_us = self.max_latency_us.max(latency_us);
+            let prev_avg = self.avg_latency_us as f64;
+            let current = latency_us as f64;
+            let new_avg = prev_avg * 0.95 + current * 0.05;
+            self.jitter_us = (self.jitter_us as f64 * 0.95 + (current - new_avg).abs() * 0.05) as u32;
+            self.avg_latency_us = new_avg as u32;
+        }
+        self.sample_count += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,6 +304,23 @@ mod tests {
     // -----------------------------------------------------------------------
     //  check_battery_warning
     // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_latency_benchmark_recording() {
+        let mut bench = LatencyBenchmark::default();
+        assert_eq!(bench.sample_count, 0);
+        bench.record_sample(1200, true);
+        assert_eq!(bench.sample_count, 1);
+        assert_eq!(bench.transport_type, "USB");
+        assert_eq!(bench.min_latency_us, 1200);
+        assert_eq!(bench.max_latency_us, 1200);
+
+        bench.record_sample(800, false);
+        assert_eq!(bench.sample_count, 2);
+        assert_eq!(bench.transport_type, "Bluetooth");
+        assert_eq!(bench.min_latency_us, 800);
+        assert_eq!(bench.max_latency_us, 1200);
+    }
 
     #[test]
     fn battery_warning_false_when_zero_percent() {

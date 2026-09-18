@@ -19,8 +19,7 @@ use windows_sys::Win32::System::Threading::{
 };
 
 /// Event IDs from the BTHUSB provider (System channel) that we treat as
-/// power-state / disconnect signatures. See
-/// `ciel/kg/decisions/2026-07-18-oxidelink-bthusb-monitoring-strategy.md`.
+/// power-state / disconnect signatures.
 pub const EVT_HCI_SIZE_MISMATCH: i32 = 5; // Error — power-down proxy
 pub const EVT_REMOTE_UNPAIRED: i32 = 10; // Info  — link key removed
 pub const EVT_LINK_KEY_STORE_FAIL: i32 = 18; // Info  — link key persistence fault
@@ -255,7 +254,7 @@ fn etw_consumer_loop(
 /// We render with `EvtRenderEventXml` (context = NULL) which produces a
 /// UTF-16 XML fragment. Parsing the EventID from the XML avoids needing the
 /// `EVT_VARIANT` system-property render path (which pulls in `Win32_Security`
-/// layout concerns) and is robust across provider schema versions.
+/// layout concerns) and is reliable across provider schema versions.
 fn render_event_id(event_handle: isize) -> i32 {
     unsafe {
         let mut used: u32 = 0;

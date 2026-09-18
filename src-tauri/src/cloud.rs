@@ -425,7 +425,7 @@ mod tests {
         let json = r#"{
             "id": "cp1",
             "name": "Pro FPS",
-            "author": "ciel",
+            "author": "community",
             "description": "fast aim",
             "download_url": "https://api.oxidelink.example/profiles/cp1",
             "tags": ["fps", "pc"],
@@ -436,7 +436,7 @@ mod tests {
         let cp: CloudProfile = serde_json::from_str(json).unwrap();
         assert_eq!(cp.id, "cp1");
         assert_eq!(cp.name, "Pro FPS");
-        assert_eq!(cp.author, "ciel");
+        assert_eq!(cp.author, "community");
         assert_eq!(cp.description, "fast aim");
         assert_eq!(
             cp.download_url,
@@ -510,7 +510,7 @@ mod tests {
             enabled: true,
             endpoint: "https://cloud.oxidelink.dev".into(),
             api_key: Some("secret-key-123".into()),
-            username: "ciel".into(),
+            username: "user".into(),
             accepted_terms: true,
         };
         let json = serde_json::to_string(&cfg).unwrap();
@@ -527,7 +527,7 @@ mod tests {
         let json = r#"{
             "enabled": true,
             "endpoint": "https://cloud.oxidelink.dev",
-            "username": "ciel",
+            "username": "user",
             "accepted_terms": true
         }"#;
         let cfg: CloudConfig = serde_json::from_str(json).unwrap();

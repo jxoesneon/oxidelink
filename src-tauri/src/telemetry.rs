@@ -274,7 +274,11 @@ impl Default for LatencyBenchmark {
 
 impl LatencyBenchmark {
     pub fn record_sample(&mut self, latency_us: u32, is_usb: bool) {
-        self.transport_type = if is_usb { "USB".into() } else { "Bluetooth".into() };
+        self.transport_type = if is_usb {
+            "USB".into()
+        } else {
+            "Bluetooth".into()
+        };
         if self.sample_count == 0 {
             self.min_latency_us = latency_us;
             self.max_latency_us = latency_us;
@@ -286,7 +290,8 @@ impl LatencyBenchmark {
             let prev_avg = self.avg_latency_us as f64;
             let current = latency_us as f64;
             let new_avg = prev_avg * 0.95 + current * 0.05;
-            self.jitter_us = (self.jitter_us as f64 * 0.95 + (current - new_avg).abs() * 0.05) as u32;
+            self.jitter_us =
+                (self.jitter_us as f64 * 0.95 + (current - new_avg).abs() * 0.05) as u32;
             self.avg_latency_us = new_avg as u32;
         }
         self.sample_count += 1;

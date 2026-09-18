@@ -16,7 +16,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "@vitest/coverage-v8": "^4.1.10",
-    "@vitest/ui": "^4.1.10",
+    "@vitest/ui": "^5.0.0",
     "jsdom": "^29.1.1",
     "vite": "^8.3.0",
     "vitest": "^4.1.10"
